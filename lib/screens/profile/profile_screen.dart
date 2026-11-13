@@ -1,31 +1,150 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui';
-import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
+import 'package:image_picker/image_picker.dart';
+
 import '../../l10n/app_localizations.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/product_image.dart';
+
 import '../dashboard/dashboard_section.dart';
 import '../orders/orders_screen.dart';
 import '../settings/settings_screen.dart';
 import '../credit/credit_screen.dart';
 import 'edit_profile_screen.dart';
 
-class ProfileScreen extends StatefulWidget {
-  final String? userName;
-  final ValueChanged<String>? onNameChanged;
+// ============================================================
+// IMAGE PROCESSING
+// Center crop + resize + JPEG compression.
+// Compatible with base64 images saved by the web application.
+// ============================================================
 
-  const ProfileScreen({
-    super.key,
-    this.userName,
-    this.onNameChanged,
-  });
+class _CropArgs {
+  final Uint8List bytes;
+  final int width;
+  final int height;
+  final int quality;
 
-  @override
-  State<ProfileScreen> createState() => _ProfileScreenState();
+  const _CropArgs(
+    this.bytes,
+    this.width,
+    this.height,
+    this.quality,
+  );
 }
+
+Uint8List _cropToJpeg(_CropArgs args) {
+  final decoded = img.decodeImage(args.bytes);
+
+  if (decoded == null) {
+    throw Exception('Invalid image file.');
+  }
+
+  final source = img.bakeOrientation(decoded);
+
+  final scale = math.max(
+    args.width / source.width,
+    args.height / source.height,
+  );
+
+  final cropWidth =
+      (args.width / scale).round().clamp(1, source.width);
+
+  final cropHeight =
+      (args.height / scale).round().clamp(1, source.height);
+
+  final cropX =
+      ((source.width - cropWidth) / 2).round().clamp(
+            0,
+            source.width - cropWidth,
+          );
+
+  final cropY =
+      ((source.height - cropHeight) / 2).round().clamp(
+            0,
+            source.height - cropHeight,
+          );
+
+  final cropped = img.copyCrop(
+    source,
+    x: cropX,
+    y: cropY,
+    width: cropWidth,
+    height: cropHeight,
+  );
+
+  final resized = img.copyResize(
+    cropped,
+    width: args.width,
+    height: args.height,
+  );
+
+  return Uint8List.fromList(
+    img.encodeJpg(resized, quality: args.quality),
+  );
+}
+
+// Convert selected image into a base64 data URL.
+Future<String> _fileToDataUrl(
+  XFile file, {
+  required int width,
+  required int height,
+  required int quality,
+}) async {
+  final bytes = await file.readAsBytes();
+
+  final jpeg = await compute(
+    _cropToJpeg,
+    _CropArgs(bytes, width, height, quality),
+  );
+
+  return 'data:image/jpeg;base64,${base64Encode(jpeg)}';
+}
+
+// Decode base64 image.
+Uint8List? _decodeBase64Image(String? source) {
+  if (source == null || source.isEmpty) return null;
+
+  if (!source.startsWith('data:image')) return null;
+
+  try {
+    final comma = source.indexOf(',');
+
+    if (comma == -1) return null;
+
+    return base64Decode(source.substring(comma + 1));
+  } catch (_) {
+    return null;
+  }
+}
+
+// Read different field names used by web and mobile.
+String _readString(
+  Map<String, dynamic> data,
+  List<String> keys, {
+  String fallback = '',
+}) {
+  for (final key in keys) {
+    final value = data[key];
+
+    if (value != null && value.toString().trim().isNotEmpty) {
+      return value.toString().trim();
+    }
+  }
+
+  return fallback;
+}
+
+// ============================================================
+// MENU MODEL
+// ============================================================
 
 class _MenuEntry {
   final IconData icon;
@@ -41,127 +160,273 @@ class _MenuEntry {
   });
 }
 
+// ============================================================
+// PROFILE SCREEN
+// ============================================================
+
+class ProfileScreen extends StatefulWidget {
+  final String? userName;
+  final ValueChanged<String>? onNameChanged;
+
+  const ProfileScreen({
+    super.key,
+    this.userName,
+    this.onNameChanged,
+  });
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
 class _ProfileScreenState extends State<ProfileScreen> {
+  final ImagePicker _picker = ImagePicker();
+
   SariColors get sari => context.sari;
   ColorScheme get scheme => Theme.of(context).colorScheme;
 
-  String _name = '';
-  String _username = '';
-  String _storeName = '';
-  String _address = '';
-  String _email = '';
-  String _phone = '';
-  String _photoUrl = '';
-  Uint8List? _imageBytes;
-  bool _loading = true;
-  String? _loadError;
+  User? get _user => FirebaseAuth.instance.currentUser;
 
-  @override
-  void initState() {
-    super.initState();
-    _fetchUserData();
+  DocumentReference<Map<String, dynamic>>? get _userDocument {
+    final user = _user;
+
+    if (user == null) return null;
+
+    return FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid);
   }
 
-  Future<void> _fetchUserData() async {
-    setState(() {
-      _loading = true;
-      _loadError = null;
-    });
+  bool _uploadingAvatar = false;
+  bool _uploadingCover = false;
 
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      try {
-        final doc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .get();
+  String _lastNotifiedName = '';
 
-        if (doc.exists && doc.data() != null) {
-          final data = doc.data()!;
-          
-          // Sinusuportahan na nito ang 'full_name', 'store_name', at 'profile_image' mula sa web
-          final fullName = (data['full_name'] ?? data['firstName'] ?? '').toString();
-          final store = (data['store_name'] ?? data['storeName'] ?? '').toString();
-          final photo = (data['profile_image'] ?? data['photoUrl'] ?? '').toString();
-          
-          Uint8List? bytes;
-          if (photo.startsWith('data:image')) {
-            try {
-              bytes = base64Decode(photo.split(',').last);
-            } catch (_) {}
-          }
+  // ==========================================================
+  // FIRESTORE UPDATE
+  // ==========================================================
 
-          if (!mounted) return;
-          setState(() {
-            _name = fullName.isNotEmpty ? fullName : (widget.userName ?? 'User');
-            _username = (data['username'] ?? '').toString().trim();
-            _storeName = store.isNotEmpty ? store : 'My Store';
-            _address = (data['address'] ?? '').toString();
-            _email = (data['email'] ?? user.email ?? '').toString();
-            _phone = (data['phone'] ?? '').toString();
-            _photoUrl = photo;
-            _imageBytes = bytes;
-            _loading = false;
-          });
-          return;
-        }
-      } catch (e) {
-        if (!mounted) return;
-        _setFallbackData();
-        setState(() {
-          _loadError = context.l10n.text('profileLoadError');
-          _loading = false;
-        });
-        return;
+  Future<void> _saveUser(Map<String, dynamic> fields) async {
+    final document = _userDocument;
+
+    if (document == null) {
+      throw Exception('User is not logged in.');
+    }
+
+    await document.set(
+      {
+        ...fields,
+        'updated_at': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+  }
+
+  // ==========================================================
+  // PROFILE PICTURE
+  // ==========================================================
+
+  Future<void> _changeAvatar() async {
+    if (_user == null || _uploadingAvatar) return;
+
+    try {
+      final picked = await _picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 90,
+      );
+
+      if (picked == null || !mounted) return;
+
+      setState(() => _uploadingAvatar = true);
+
+      final dataUrl = await _fileToDataUrl(
+        picked,
+        width: 256,
+        height: 256,
+        quality: 85,
+      );
+
+      await _saveUser({
+        'profile_image': dataUrl,
+      });
+
+      if (!mounted) return;
+
+      _toast('Profile picture updated successfully.');
+    } catch (e) {
+      debugPrint('Avatar upload error: $e');
+
+      if (mounted) {
+        _toast('Unable to update profile picture: $e', error: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _uploadingAvatar = false);
       }
     }
-    _setFallbackData();
-    if (mounted) setState(() => _loading = false);
   }
 
-  void _setFallbackData() {
-    final user = FirebaseAuth.instance.currentUser;
-    setState(() {
-      _name = (widget.userName != null && widget.userName!.isNotEmpty)
-          ? widget.userName!
-          : (user?.displayName?.trim().isNotEmpty == true
-              ? user!.displayName!
-              : 'User');
-      _username = '';
-      _storeName = 'My Store';
-      _email = user?.email ?? '';
-      _phone = '';
-      _address = '';
-    });
+  // ==========================================================
+  // COVER PHOTO
+  // ==========================================================
+
+  Future<void> _changeCover() async {
+    if (_user == null || _uploadingCover) return;
+
+    try {
+      final picked = await _picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 90,
+      );
+
+      if (picked == null || !mounted) return;
+
+      setState(() => _uploadingCover = true);
+
+      final dataUrl = await _fileToDataUrl(
+        picked,
+        width: 1400,
+        height: 320,
+        quality: 70,
+      );
+
+      await _saveUser({
+        'cover_image': dataUrl,
+      });
+
+      if (!mounted) return;
+
+      _toast('Cover photo updated successfully.');
+    } catch (e) {
+      debugPrint('Cover upload error: $e');
+
+      if (mounted) {
+        _toast('Unable to update cover photo: $e', error: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _uploadingCover = false);
+      }
+    }
   }
+
+  // ==========================================================
+  // EDIT PROFILE SCREEN
+  // Preserve existing EditProfileScreen navigation.
+  // ==========================================================
 
   Future<void> _openEditProfile() async {
     final updated = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => const EditProfileScreen()),
+      MaterialPageRoute(
+        builder: (_) => const EditProfileScreen(),
+      ),
     );
+
     if (updated == true && mounted) {
-      await _fetchUserData();
-      if (widget.onNameChanged != null) {
-        widget.onNameChanged!(_name);
-      }
+      await _refreshName();
     }
   }
 
-  Widget _avatar({double radius = 26}) {
+  Future<void> _refreshName() async {
+    final user = _user;
+
+    if (user == null) return;
+
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      if (!mounted) return;
+
+      final data = snapshot.data() ?? {};
+
+      final name = _readString(
+        data,
+        ['full_name', 'name', 'firstName'],
+        fallback: user.displayName ?? 'User',
+      );
+
+      _notifyNameChanged(name);
+    } catch (e) {
+      debugPrint('Profile refresh error: $e');
+    }
+  }
+
+  void _notifyNameChanged(String name) {
+    if (name == _lastNotifiedName) return;
+
+    _lastNotifiedName = name;
+
+    widget.onNameChanged?.call(name);
+  }
+
+  // ==========================================================
+  // REFRESH
+  // ==========================================================
+
+  Future<void> _refreshProfile() async {
+    final user = _user;
+
+    if (user == null) return;
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get(
+            const GetOptions(source: Source.server),
+          );
+    } catch (e) {
+      debugPrint('Refresh error: $e');
+    }
+  }
+
+  // ==========================================================
+  // SNACKBAR
+  // ==========================================================
+
+  void _toast(String message, {bool error = false}) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor:
+              error ? Colors.red.shade700 : sari.success,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  // ==========================================================
+  // AVATAR
+  // ==========================================================
+
+  Widget _avatar({
+    double radius = 28,
+    required String name,
+    required String photoUrl,
+  }) {
+    final bytes = _decodeBase64Image(photoUrl);
+
     Widget avatar;
-    if (_imageBytes != null) {
+
+    if (bytes != null) {
       avatar = CircleAvatar(
         radius: radius,
         backgroundColor: sari.success,
-        backgroundImage: MemoryImage(_imageBytes!),
+        backgroundImage: MemoryImage(bytes),
       );
-    } else if (_photoUrl.isNotEmpty && !_photoUrl.startsWith('data:image')) {
+    } else if (photoUrl.isNotEmpty) {
       avatar = CircleAvatar(
         radius: radius,
         backgroundColor: sari.success,
         child: ClipOval(
           child: ProductImage(
-            imageUrl: _photoUrl,
+            imageUrl: photoUrl,
             width: radius * 2,
             height: radius * 2,
             fit: BoxFit.cover,
@@ -173,7 +438,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         radius: radius,
         backgroundColor: sari.success,
         child: Text(
-          _name.isNotEmpty ? _name[0].toUpperCase() : 'U',
+          name.isNotEmpty ? name[0].toUpperCase() : 'U',
           style: TextStyle(
             color: sari.onAccent,
             fontWeight: FontWeight.bold,
@@ -186,7 +451,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: _loading ? null : _openEditProfile,
+        onTap: _uploadingAvatar ? null : _changeAvatar,
         customBorder: const CircleBorder(),
         child: Stack(
           clipBehavior: Clip.none,
@@ -195,7 +460,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: sari.success.withValues(alpha: 0.45),
+                  color: sari.success.withValues(alpha: 0.5),
                   width: 2,
                 ),
               ),
@@ -205,7 +470,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               right: -2,
               bottom: -2,
               child: Container(
-                padding: const EdgeInsets.all(4),
+                padding: const EdgeInsets.all(5),
                 decoration: BoxDecoration(
                   color: sari.warning,
                   shape: BoxShape.circle,
@@ -214,11 +479,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     width: 2,
                   ),
                 ),
-                child: Icon(
-                  Icons.camera_alt_rounded,
-                  size: 10,
-                  color: sari.onAccentAmber,
-                ),
+                child: _uploadingAvatar
+                    ? const SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : Icon(
+                        Icons.camera_alt_rounded,
+                        size: 12,
+                        color: sari.onAccentAmber,
+                      ),
               ),
             ),
           ],
@@ -227,262 +500,262 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final width = MediaQuery.sizeOf(context).width;
-    final horizontal = width < 360 ? 14.0 : 18.0;
-    final l10n = context.l10n;
+  // ==========================================================
+  // COVER PHOTO
+  // ==========================================================
 
-    final contactRows = <Widget>[
-      if (_phone.isNotEmpty) _contactRow(Icons.phone_outlined, _phone),
-      if (_address.isNotEmpty)
-        _contactRow(Icons.location_on_outlined, _address, maxLines: 2),
-    ];
+  Widget _cover(String coverUrl) {
+    final bytes = _decodeBase64Image(coverUrl);
 
-    return Scaffold(
-      resizeToAvoidBottomInset: false,
-      body: Container(
-        decoration: BoxDecoration(gradient: sari.screenGradient),
-        child: SafeArea(
-          child: RefreshIndicator(
-            color: sari.warning,
-            backgroundColor: sari.cardSurfaceStrong,
-            onRefresh: _fetchUserData,
-            child: SingleChildScrollView(
-              physics: const AlwaysScrollableScrollPhysics(
-                parent: BouncingScrollPhysics(),
-              ),
-              padding: EdgeInsets.fromLTRB(horizontal, 6, horizontal, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(4, 4, 4, 10),
-                    child: Text(
-                      l10n.text('profileTitle'),
-                      style: TextStyle(
-                        color: scheme.onSurface,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                  ),
-                  if (_loadError != null) ...[
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(10),
-                      margin: const EdgeInsets.only(bottom: 10),
-                      decoration: BoxDecoration(
-                        color: sari.warning.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: sari.warning.withValues(alpha: 0.35),
-                        ),
-                      ),
-                      child: Text(
-                        _loadError!,
-                        style: TextStyle(
-                          color: sari.warning,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                  ],
-
-                  // ── Compact identity card ───────────────────────────────
-                  _glassCard(
-                    child: _loading
-                        ? Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 28),
-                            child: Center(
-                              child: CircularProgressIndicator(
-                                color: sari.success,
-                              ),
-                            ),
-                          )
-                        : Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  _avatar(),
-                                  const SizedBox(width: 14),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          _name,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: scheme.onSurface,
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                            height: 1.2,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 3),
-                                        Wrap(
-                                          spacing: 8,
-                                          runSpacing: 4,
-                                          crossAxisAlignment:
-                                              WrapCrossAlignment.center,
-                                          children: [
-                                            if (_username.isNotEmpty)
-                                              Text(
-                                                '@$_username',
-                                                style: TextStyle(
-                                                  color: sari.warning,
-                                                  fontSize: 12,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                              ),
-                                            if (_storeName.isNotEmpty)
-                                              _storeChip(_storeName),
-                                          ],
-                                        ),
-                                        if (_email.isNotEmpty) ...[
-                                          const SizedBox(height: 5),
-                                          Text(
-                                            _email,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              color: sari.mutedText,
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                        ],
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  _editButton(l10n.text('edit')),
-                                ],
-                              ),
-                              if (contactRows.isNotEmpty) ...[
-                                const SizedBox(height: 10),
-                                Divider(
-                                  color: sari.glassBorder,
-                                  height: 1,
-                                  thickness: 1,
-                                ),
-                                const SizedBox(height: 10),
-                                for (var i = 0; i < contactRows.length; i++) ...[
-                                  if (i > 0) const SizedBox(height: 8),
-                                  contactRows[i],
-                                ],
-                              ],
-                            ],
+    return Container(
+      height: 135,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: sari.success.withValues(alpha: 0.18),
+        image: bytes != null
+            ? DecorationImage(
+                image: MemoryImage(bytes),
+                fit: BoxFit.cover,
+              )
+            : coverUrl.isNotEmpty &&
+                    !coverUrl.startsWith('data:image')
+                ? DecorationImage(
+                    image: NetworkImage(coverUrl),
+                    fit: BoxFit.cover,
+                    onError: (_, __) {},
+                  )
+                : null,
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            right: 10,
+            top: 10,
+            child: Material(
+              color: Colors.black.withValues(alpha: 0.35),
+              shape: const CircleBorder(),
+              child: InkWell(
+                onTap: _uploadingCover ? null : _changeCover,
+                customBorder: const CircleBorder(),
+                child: Padding(
+                  padding: const EdgeInsets.all(9),
+                  child: _uploadingCover
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
                           ),
-                  ),
-
-                  if (!_loading) ...[
-                    const SizedBox(height: 12),
-                    const DashboardSection(),
-                  ],
-
-                  const SizedBox(height: 18),
-                  Padding(
-                    padding: const EdgeInsets.only(left: 4, bottom: 8),
-                    child: Text(
-                      l10n.text('manage'),
-                      style: TextStyle(
-                        color: sari.faintText,
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.8,
-                      ),
-                    ),
-                  ),
-                  _menuGroup([
-                    _MenuEntry(
-                      icon: Icons.receipt_long_rounded,
-                      title: l10n.text('orders'),
-                      subtitle: l10n.text('ordersSubtitle'),
-                      destination: const OrdersScreen(),
-                    ),
-                    _MenuEntry(
-                      icon: Icons.assignment_outlined,
-                      title: l10n.text('creditUtang'),
-                      subtitle: l10n.text('creditUtangSubtitle'),
-                      destination: const CreditScreen(),
-                    ),
-                    _MenuEntry(
-                      icon: Icons.settings_outlined,
-                      title: l10n.text('settings'),
-                      subtitle: l10n.text('settingsMenuSubtitle'),
-                      destination: const SettingsScreen(),
-                    ),
-                  ]),
-                  const SizedBox(height: 90),
-                ],
+                        )
+                      : const Icon(
+                          Icons.camera_alt_outlined,
+                          color: Colors.white,
+                          size: 19,
+                        ),
+                ),
               ),
             ),
           ),
-        ),
+          if (coverUrl.isEmpty)
+            Center(
+              child: Icon(
+                Icons.storefront_rounded,
+                color: Colors.white.withValues(alpha: 0.25),
+                size: 55,
+              ),
+            ),
+        ],
       ),
     );
   }
 
-  Widget _glassCard({
-    required Widget child,
-    EdgeInsetsGeometry padding = const EdgeInsets.all(12),
+  // ==========================================================
+  // PROFILE IDENTITY CARD
+  // ==========================================================
+
+  Widget _identityCard({
+    required String name,
+    required String username,
+    required String storeName,
+    required String email,
+    required String phone,
+    required String address,
+    required String photoUrl,
+    required String coverUrl,
   }) {
+    final contactRows = <Widget>[
+      if (phone.isNotEmpty)
+        _contactRow(Icons.phone_outlined, phone),
+      if (address.isNotEmpty)
+        _contactRow(
+          Icons.location_on_outlined,
+          address,
+          maxLines: 2,
+        ),
+    ];
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(20),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+        filter: ImageFilter.blur(
+          sigmaX: 8,
+          sigmaY: 8,
+        ),
         child: Container(
-          width: double.infinity,
-          padding: padding,
           decoration: BoxDecoration(
-            color: sari.cardSurfaceStrong.withValues(alpha: 0.92),
+            color: sari.cardSurfaceStrong.withValues(alpha: 0.94),
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
               color: sari.glassBorder,
               width: 1.2,
             ),
           ),
-          child: child,
-        ),
-      ),
-    );
-  }
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _cover(coverUrl),
 
-  Widget _editButton(String tooltip) {
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: _openEditProfile,
-          customBorder: const CircleBorder(),
-          child: Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: sari.warning, width: 1.3),
-            ),
-            child: Icon(
-              Icons.edit_outlined,
-              size: 16,
-              color: sari.warning,
-            ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Transform.translate(
+                      offset: const Offset(0, -35),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          _avatar(
+                            radius: 38,
+                            name: name,
+                            photoUrl: photoUrl,
+                          ),
+                          const Spacer(),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: _editButton(),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    Transform.translate(
+                      offset: const Offset(0, -25),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: scheme.onSurface,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+
+                          const SizedBox(height: 5),
+
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 5,
+                            crossAxisAlignment:
+                                WrapCrossAlignment.center,
+                            children: [
+                              if (username.isNotEmpty)
+                                Text(
+                                  '@$username',
+                                  style: TextStyle(
+                                    color: sari.warning,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              if (storeName.isNotEmpty)
+                                _storeChip(storeName),
+                            ],
+                          ),
+
+                          if (email.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              email,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: sari.mutedText,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+
+                    if (contactRows.isNotEmpty) ...[
+                      const SizedBox(height: 0),
+                      Divider(
+                        color: sari.glassBorder,
+                        height: 1,
+                      ),
+                      const SizedBox(height: 12),
+                      for (var i = 0; i < contactRows.length; i++) ...[
+                        if (i > 0) const SizedBox(height: 9),
+                        contactRows[i],
+                      ],
+                    ],
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
+  // ==========================================================
+  // EDIT BUTTON
+  // ==========================================================
+
+  Widget _editButton() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _openEditProfile,
+        customBorder: const CircleBorder(),
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: sari.warning,
+              width: 1.3,
+            ),
+          ),
+          child: Icon(
+            Icons.edit_outlined,
+            size: 17,
+            color: sari.warning,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ==========================================================
+  // STORE CHIP
+  // ==========================================================
+
   Widget _storeChip(String text) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 9,
+        vertical: 4,
+      ),
       decoration: BoxDecoration(
         color: sari.success.withValues(alpha: 0.18),
         borderRadius: BorderRadius.circular(10),
@@ -490,7 +763,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.storefront_outlined, size: 13, color: sari.success),
+          Icon(
+            Icons.storefront_outlined,
+            size: 13,
+            color: sari.success,
+          ),
           const SizedBox(width: 5),
           Flexible(
             child: Text(
@@ -509,11 +786,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _contactRow(IconData icon, String text, {int maxLines = 1}) {
+  // ==========================================================
+  // CONTACT ROW
+  // ==========================================================
+
+  Widget _contactRow(
+    IconData icon,
+    String text, {
+    int maxLines = 1,
+  }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 16, color: sari.mutedText),
+        Icon(
+          icon,
+          size: 16,
+          color: sari.mutedText,
+        ),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
@@ -530,6 +819,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ],
     );
   }
+
+  // ==========================================================
+  // GLASS CARD
+  // ==========================================================
+
+  Widget _glassCard({
+    required Widget child,
+    EdgeInsetsGeometry padding = const EdgeInsets.all(12),
+  }) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(
+          sigmaX: 8,
+          sigmaY: 8,
+        ),
+        child: Container(
+          width: double.infinity,
+          padding: padding,
+          decoration: BoxDecoration(
+            color: sari.cardSurfaceStrong.withValues(alpha: 0.92),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: sari.glassBorder,
+              width: 1.2,
+            ),
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  // ==========================================================
+  // MENU GROUP
+  // ==========================================================
 
   Widget _menuGroup(List<_MenuEntry> entries) {
     return Container(
@@ -564,17 +889,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // ==========================================================
+  // MENU ROW
+  // ==========================================================
+
   Widget _menuRow(_MenuEntry entry) {
     return InkWell(
       onTap: () async {
         await Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => entry.destination),
+          MaterialPageRoute(
+            builder: (_) => entry.destination,
+          ),
         );
-        if (mounted) await _fetchUserData();
+
+        if (mounted) {
+          await _refreshProfile();
+        }
       },
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 12,
+        ),
         child: Row(
           children: [
             Container(
@@ -583,9 +920,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 color: sari.success.withValues(alpha: 0.22),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(entry.icon, color: sari.success, size: 18),
+              child: Icon(
+                entry.icon,
+                color: sari.success,
+                size: 18,
+              ),
             ),
+
             const SizedBox(width: 12),
+
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -611,12 +954,231 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
               ),
             ),
+
             Icon(
               Icons.chevron_right_rounded,
               color: sari.warning,
               size: 20,
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  // ==========================================================
+  // MAIN BUILD
+  // ==========================================================
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final horizontal = width < 360 ? 14.0 : 18.0;
+
+    final l10n = context.l10n;
+    final user = _user;
+    final document = _userDocument;
+
+    if (user == null || document == null) {
+      return const Scaffold(
+        body: Center(
+          child: Text('Hindi naka-login.'),
+        ),
+      );
+    }
+
+    return Scaffold(
+      resizeToAvoidBottomInset: false,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: sari.screenGradient,
+        ),
+        child: SafeArea(
+          child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            // Live Firestore listener:
+            // Changes from web and mobile appear automatically.
+            stream: document.snapshots(),
+
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return Center(
+                  child: Text(
+                    'Profile error: ${snapshot.error}',
+                    style: TextStyle(color: scheme.onSurface),
+                  ),
+                );
+              }
+
+              if (!snapshot.hasData) {
+                return Center(
+                  child: CircularProgressIndicator(
+                    color: sari.success,
+                  ),
+                );
+              }
+
+              final data = snapshot.data!.data() ??
+                  <String, dynamic>{};
+
+              // Support web and mobile field names.
+              final name = _readString(
+                data,
+                ['full_name', 'name', 'firstName'],
+                fallback: widget.userName ??
+                    user.displayName ??
+                    'User',
+              );
+
+              final storeName = _readString(
+                data,
+                ['store_name', 'storeName'],
+                fallback: 'My Store',
+              );
+
+              final username = _readString(
+                data,
+                ['username'],
+              );
+
+              final photoUrl = _readString(
+                data,
+                ['profile_image', 'photoUrl', 'photo_url'],
+              );
+
+              final coverUrl = _readString(
+                data,
+                ['cover_image', 'coverImage', 'cover_url'],
+              );
+
+              final email = _readString(
+                data,
+                ['email'],
+                fallback: user.email ?? '',
+              );
+
+              final phone = _readString(
+                data,
+                ['phone', 'phone_number', 'phoneNumber'],
+              );
+
+              final address = _readString(
+                data,
+                [
+                  'store_address',
+                  'address',
+                  'storeAddress',
+                ],
+              );
+
+              // Notify parent when owner name changes.
+              if (name != _lastNotifiedName) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) {
+                    _notifyNameChanged(name);
+                  }
+                });
+              }
+
+              return RefreshIndicator(
+                color: sari.warning,
+                backgroundColor: sari.cardSurfaceStrong,
+                onRefresh: _refreshProfile,
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(
+                    parent: BouncingScrollPhysics(),
+                  ),
+                  padding: EdgeInsets.fromLTRB(
+                    horizontal,
+                    6,
+                    horizontal,
+                    12,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // PROFILE TITLE
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          4,
+                          4,
+                          4,
+                          12,
+                        ),
+                        child: Text(
+                          l10n.text('profileTitle'),
+                          style: TextStyle(
+                            color: scheme.onSurface,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.2,
+                          ),
+                        ),
+                      ),
+
+                      // PROFILE IDENTITY CARD
+                      _identityCard(
+                        name: name,
+                        username: username,
+                        storeName: storeName,
+                        email: email,
+                        phone: phone,
+                        address: address,
+                        photoUrl: photoUrl,
+                        coverUrl: coverUrl,
+                      ),
+
+                      // DASHBOARD SECTION
+                      const SizedBox(height: 12),
+                      const DashboardSection(),
+
+                      // MANAGE SECTION
+                      const SizedBox(height: 18),
+
+                      Padding(
+                        padding: const EdgeInsets.only(
+                          left: 4,
+                          bottom: 8,
+                        ),
+                        child: Text(
+                          l10n.text('manage'),
+                          style: TextStyle(
+                            color: sari.faintText,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.8,
+                          ),
+                        ),
+                      ),
+
+                      // EXISTING NAVIGATION
+                      _menuGroup([
+                        _MenuEntry(
+                          icon: Icons.receipt_long_rounded,
+                          title: l10n.text('orders'),
+                          subtitle: l10n.text('ordersSubtitle'),
+                          destination: const OrdersScreen(),
+                        ),
+                        _MenuEntry(
+                          icon: Icons.assignment_outlined,
+                          title: l10n.text('creditUtang'),
+                          subtitle: l10n.text('creditUtangSubtitle'),
+                          destination: const CreditScreen(),
+                        ),
+                        _MenuEntry(
+                          icon: Icons.settings_outlined,
+                          title: l10n.text('settings'),
+                          subtitle: l10n.text('settingsMenuSubtitle'),
+                          destination: const SettingsScreen(),
+                        ),
+                      ]),
+
+                      const SizedBox(height: 90),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
         ),
       ),
     );

@@ -13,7 +13,6 @@ import '../notifications/notifications_screen.dart';
 import '../orders/orders_screen.dart';
 import '../profile/profile_screen.dart';
 import '../scan/scan_screen.dart';
-
 import 'home_screen.dart';
 
 class MainShell extends StatefulWidget {
@@ -57,9 +56,7 @@ class _MainShellState extends State<MainShell> {
   @override
   void dispose() {
     CartStore.instance.onOpenCartRequested = null;
-
     PushNotificationService.instance.onNotificationOpened = null;
-
     super.dispose();
   }
 
@@ -73,7 +70,7 @@ class _MainShellState extends State<MainShell> {
     try {
       await Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (context) => screen,
+          builder: (_) => screen,
         ),
       );
     } finally {
@@ -149,11 +146,9 @@ class _MainShellState extends State<MainShell> {
       },
       child: Scaffold(
         extendBody: true,
-
         body: IndexedStack(
           index: _currentIndex,
           children: [
-            // HOME
             HomeScreen(
               onOpenCart: _openCart,
               onOpenNotif: _openNotif,
@@ -161,28 +156,18 @@ class _MainShellState extends State<MainShell> {
                 _onTabSelected(MainShell.profileTab);
               },
             ),
-
-            // INVENTORY
             const InventoryScreen(),
-
-            // SCAN
             ScanScreen(
               onOpenCart: _openCart,
               isActive: _currentIndex == MainShell.scanTab &&
                   _coveringRoutes == 0,
             ),
-
-            // NOTIFICATIONS
             NotificationsScreen(
               onOpenRelated: _onNotifRelated,
             ),
-
-            // PROFILE
             const ProfileScreen(),
           ],
         ),
-
-        // BOTTOM NAVIGATION
         bottomNavigationBar: AppBottomNav(
           currentIndex: _currentIndex,
           onTap: _onTabSelected,

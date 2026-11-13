@@ -169,7 +169,8 @@ class SettingsStore extends ChangeNotifier {
           _lowStock = settings['lowStock'] as bool? ?? _lowStock;
           _twoFactor = settings['twoFactor'] as bool? ?? _twoFactor;
           _languageCode = _normalizeLanguage(
-              settings['language'] as String? ?? _languageCode);
+            settings['language'] as String? ?? _languageCode,
+          );
           _themeMode = _themeModeFromString(
             settings['themeMode'] as String? ?? _themeModeToString(_themeMode),
           );

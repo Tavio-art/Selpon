@@ -1,7 +1,9 @@
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:sari_app/services/notification_store.dart';
+
 import '../../l10n/app_localizations.dart';
-import '../../services/notification_store.dart';
 import '../theme/app_theme.dart';
 
 class AppBottomNav extends StatelessWidget {
@@ -20,8 +22,8 @@ class AppBottomNav extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
+    final l10n = AppLocalizations.of(context);
 
-    final l10n = context.l10n;
     final items = [
       (
         icon: Icons.home_outlined,
@@ -79,121 +81,128 @@ class AppBottomNav extends StatelessWidget {
               final selected = currentIndex == index;
               final isScan = index == 2;
 
-              if (isScan) {
-                return Expanded(
-                  child: GestureDetector(
-                    onTap: () => onTap(index),
-                    behavior: HitTestBehavior.opaque,
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Transform.translate(
-                          offset: const Offset(0, -12),
-                          child: Container(
-                            width: 54,
-                            height: 54,
-                            decoration: BoxDecoration(
-                              color: sari.navBarScanBg,
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: sari.shadow,
-                                  blurRadius: 12,
-                                  offset: const Offset(0, 5),
-                                ),
-                              ],
-                            ),
-                            child: Icon(
-                              item.icon,
-                              color: sari.navBarScanFg,
-                              size: 26,
-                            ),
-                          ),
-                        ),
-                        Transform.translate(
-                          offset: const Offset(0, -6),
-                          child: Text(
-                            item.label,
-                            style: GoogleFonts.outfit(
-                              color: selected ? scheme.primary : sari.faintText,
-                              fontSize: 11,
-                              fontWeight:
-                                  selected ? FontWeight.w700 : FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              }
-
               return Expanded(
                 child: GestureDetector(
                   onTap: () => onTap(index),
                   behavior: HitTestBehavior.opaque,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          Icon(
-                            selected ? item.selectedIcon : item.icon,
-                            color: selected ? scheme.primary : sari.faintText,
-                            size: 24,
-                          ),
-                          if (index == 3)
-                            ListenableBuilder(
-                              listenable: NotificationStore.instance,
-                              builder: (context, _) {
-                                final unread =
-                                    NotificationStore.instance.unreadCount;
-                                if (unread <= 0) return const SizedBox.shrink();
-                                return Positioned(
-                                  right: -6,
-                                  top: -3,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 4,
-                                      vertical: 1,
+                  child: isScan
+                      ? Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Transform.translate(
+                              offset: const Offset(0, -12),
+                              child: Container(
+                                width: 54,
+                                height: 54,
+                                decoration: BoxDecoration(
+                                  color: sari.navBarScanBg,
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: sari.shadow,
+                                      blurRadius: 12,
+                                      offset: const Offset(0, 5),
                                     ),
-                                    decoration: BoxDecoration(
-                                      color: sari.danger,
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    constraints: const BoxConstraints(
-                                      minWidth: 14,
-                                      minHeight: 14,
-                                    ),
-                                    child: Text(
-                                      unread > 9 ? '9+' : '$unread',
-                                      textAlign: TextAlign.center,
-                                      style: GoogleFonts.outfit(
-                                        color: Colors.white,
-                                        fontSize: 8,
-                                        fontWeight: FontWeight.bold,
-                                        height: 1,
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              },
+                                  ],
+                                ),
+                                child: Icon(
+                                  item.icon,
+                                  color: sari.navBarScanFg,
+                                  size: 26,
+                                ),
+                              ),
                             ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        item.label,
-                        style: GoogleFonts.outfit(
-                          color: selected ? scheme.primary : sari.faintText,
-                          fontSize: 11,
-                          fontWeight:
-                              selected ? FontWeight.w700 : FontWeight.w500,
+                            Transform.translate(
+                              offset: const Offset(0, -6),
+                              child: Text(
+                                item.label,
+                                style: GoogleFonts.outfit(
+                                  color: selected
+                                      ? scheme.primary
+                                      : sari.faintText,
+                                  fontSize: 11,
+                                  fontWeight: selected
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ],
+                        )
+                      : Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                Icon(
+                                  selected
+                                      ? item.selectedIcon
+                                      : item.icon,
+                                  color: selected
+                                      ? scheme.primary
+                                      : sari.faintText,
+                                  size: 24,
+                                ),
+                                if (index == 3)
+                                  ListenableBuilder(
+                                    listenable: NotificationStore.instance,
+                                    builder: (context, _) {
+                                      final unread = NotificationStore
+                                          .instance.unreadCount;
+
+                                      if (unread <= 0) {
+                                        return const SizedBox.shrink();
+                                      }
+
+                                      return Positioned(
+                                        right: -6,
+                                        top: -3,
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 4,
+                                            vertical: 1,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: sari.danger,
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                          ),
+                                          constraints: const BoxConstraints(
+                                            minWidth: 14,
+                                            minHeight: 14,
+                                          ),
+                                          child: Text(
+                                            unread > 9 ? '9+' : '$unread',
+                                            textAlign: TextAlign.center,
+                                            style: GoogleFonts.outfit(
+                                              color: Colors.white,
+                                              fontSize: 8,
+                                              fontWeight: FontWeight.bold,
+                                              height: 1,
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              item.label,
+                              style: GoogleFonts.outfit(
+                                color: selected
+                                    ? scheme.primary
+                                    : sari.faintText,
+                                fontSize: 11,
+                                fontWeight: selected
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                    ],
-                  ),
                 ),
               );
             }),
