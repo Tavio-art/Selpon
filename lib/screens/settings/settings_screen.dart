@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/theme/theme_controller.dart';
 import '../../l10n/app_localizations.dart';
+import '../../models/product.dart';
 import '../../services/push_notification_service.dart';
 import '../../services/settings_store.dart';
 import '../../services/user_profile_store.dart';
@@ -484,7 +485,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               _switchRow(
                                 icon: Icons.inventory_2_outlined,
                                 title: l10n.text('lowStockAlerts'),
-                                subtitle: l10n.text('lowStockSubtitle'),
+                                subtitle: l10n.text(
+                                  'lowStockSubtitle',
+                                  values: {
+                                    'threshold':
+                                        '${Product.lowStockThreshold}',
+                                  },
+                                ),
                                 value: _settings.lowStockEnabled,
                                 onChanged: (v) => _settings.setLowStock(v),
                               ),

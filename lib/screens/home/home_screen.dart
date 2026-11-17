@@ -7,6 +7,7 @@ import '../../core/widgets/app_page_header.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_search_bar.dart';
 import '../../core/widgets/app_snackbar.dart';
+import '../../core/widgets/cart_bar.dart';
 import '../../core/widgets/cart_added_popup.dart';
 import '../../core/widgets/category_chip.dart';
 import '../../core/widgets/empty_state.dart';
@@ -215,8 +216,11 @@ class _HomeScreenState extends State<HomeScreen> {
           ]),
           builder: (context, _) {
             final cartItemCount = CartStore.instance.itemCount;
-            // Home draws under the floating nav — clear bar + Scan FAB + gap.
-            final navBottomInset = AppBottomNav.bodyBottomInset(context);
+            final cartSubtotal = CartStore.instance.subtotal;
+            // Home draws under the floating nav and the CartBar overlay.
+            final cartBarBottom = AppBottomNav.occupiedHeight(context) + 16;
+            final listBottomInset = cartBarBottom +
+                (cartItemCount > 0 ? CartBar.height : 0);
             final productStream = _products.watchProducts();
 
             return Stack(
@@ -492,10 +496,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             return GridView.builder(
                               physics: const BouncingScrollPhysics(),
                               padding: EdgeInsets.only(
-                                bottom: navBottomInset +
-                                    (_showCartPopup && cartItemCount > 0
-                                        ? 96
-                                        : 0),
+                                bottom: listBottomInset,
                               ),
                               itemCount: filteredProducts.length,
                               gridDelegate:
@@ -521,6 +522,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
 
+                CartBar(
+                  onTap: _goToCart,
+                  bottom: cartBarBottom,
+                  itemCount: cartItemCount,
+                  subtotal: cartSubtotal,
+                ),
+
                 // Floating "Added to Cart" toast (shared with Scan).
                 // Home SafeArea is bottom:false — clear the full floating nav.
                 if (_showCartPopup &&
@@ -531,6 +539,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     quantity: _lastAddedQuantity,
                     onViewCart: _goToCart,
                     insideSafeArea: false,
+                    showCartAction: false,
+                    bottomOffset: CartBar.height + 12,
                   ),
               ],
             );

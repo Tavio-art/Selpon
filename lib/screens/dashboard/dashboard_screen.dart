@@ -60,7 +60,7 @@ class DashboardScreen extends StatelessWidget {
                     return StreamBuilder<QuerySnapshot>(
                       stream: uid == null
                           ? const Stream.empty()
-                          : firebase.getOrdersStream(userId: uid, limit: 200),
+                          : firebase.getOrdersStream(userId: uid, limit: 30),
                       builder: (context, orderSnap) {
                         return StreamBuilder<
                             QuerySnapshot<Map<String, dynamic>>>(

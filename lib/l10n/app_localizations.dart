@@ -147,7 +147,7 @@ class AppLocalizations {
       'emailAlerts': 'Email Alerts',
       'emailAlertsSubtitle': 'Preference saved — email delivery needs backend',
       'lowStockAlerts': 'Low Stock Alerts',
-      'lowStockSubtitle': 'Notify when stock is 5 or below',
+      'lowStockSubtitle': 'Notify when stock is {threshold} or below',
       'logOut': 'Log Out',
       'logOutTitle': 'Log out?',
       'logOutMessage': 'You will need to sign in again to manage your store.',
@@ -569,7 +569,7 @@ class AppLocalizations {
       'emailAlertsSubtitle':
           'Nai-save ang preference — kailangan ng backend para sa email delivery',
       'lowStockAlerts': 'Alerto sa Mababang Stock',
-      'lowStockSubtitle': 'Mag-abiso kapag 5 o mas mababa ang stock',
+      'lowStockSubtitle': 'Mag-abiso kapag {threshold} o mas mababa ang stock',
       'logOut': 'Mag-log Out',
       'logOutTitle': 'Mag-log out?',
       'logOutMessage':

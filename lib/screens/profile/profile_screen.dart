@@ -24,12 +24,6 @@ import '../settings/settings_screen.dart';
 import '../credit/credit_screen.dart';
 import 'edit_profile_screen.dart';
 
-// ============================================================
-// IMAGE PROCESSING
-// Center crop + resize + JPEG compression.
-// Compatible with base64 images saved by the web application.
-// ============================================================
-
 class _CropArgs {
   final Uint8List bytes;
   final int width;
