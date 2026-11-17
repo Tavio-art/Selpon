@@ -129,7 +129,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     final sari = context.sari;
     if (stock == 0) {
       return sari.danger;
-    } else if (stock <= 5) {
+    } else if (stock <= Product.lowStockThreshold) {
       return sari.accentAmber;
     } else {
       return sari.success;
@@ -558,7 +558,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                     : ListView.separated(
                         physics: const BouncingScrollPhysics(),
                         padding: EdgeInsets.only(
-                          bottom: AppBottomNav.bodyBottomInset(context),
+                          bottom: AppBottomNav.occupiedHeight(context) + 16,
                         ),
                         itemCount: items.length,
                         separatorBuilder: (_, __) => Divider(

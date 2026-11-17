@@ -15,6 +15,8 @@ class CartAddedPopup extends StatelessWidget {
 
   /// When true, [bottom] is measured inside an existing bottom [SafeArea].
   final bool insideSafeArea;
+  final bool showCartAction;
+  final double bottomOffset;
 
   const CartAddedPopup({
     super.key,
@@ -22,6 +24,8 @@ class CartAddedPopup extends StatelessWidget {
     required this.quantity,
     required this.onViewCart,
     this.insideSafeArea = true,
+    this.showCartAction = true,
+    this.bottomOffset = 0,
   });
 
   @override
@@ -38,12 +42,11 @@ class CartAddedPopup extends StatelessWidget {
     return Positioned(
       left: 16,
       right: 16,
-      bottom: bottom,
+      bottom: bottom + bottomOffset,
       child: ListenableBuilder(
-        listenable: Listenable.merge([
-          CartStore.instance,
-          SettingsStore.instance,
-        ]),
+        listenable: showCartAction
+            ? Listenable.merge([CartStore.instance, SettingsStore.instance])
+            : SettingsStore.instance,
         builder: (context, _) {
           final cartItemCount = CartStore.instance.itemCount;
           final cartSubtotal = CartStore.instance.subtotal;
@@ -107,53 +110,55 @@ class CartAddedPopup extends StatelessWidget {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 40,
-                    child: ElevatedButton(
-                      onPressed: onViewCart,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: sari.accentAmber,
-                        foregroundColor: sari.onAccentAmber,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20),
+                  if (showCartAction) ...[
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 40,
+                      child: ElevatedButton(
+                        onPressed: onViewCart,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: sari.accentAmber,
+                          foregroundColor: sari.onAccentAmber,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          elevation: 0,
                         ),
-                        elevation: 0,
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              context.l10n.text(
-                                cartItemCount > 1
-                                    ? 'viewCartItemsPlural'
-                                    : 'viewCartItems',
-                                values: {'count': '$cartItemCount'},
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                context.l10n.text(
+                                  cartItemCount > 1
+                                      ? 'viewCartItemsPlural'
+                                      : 'viewCartItems',
+                                  values: {'count': '$cartItemCount'},
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: GoogleFonts.outfit(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 13,
+                                ),
                               ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              SettingsStore.instance.formatMoney(cartSubtotal),
                               style: GoogleFonts.outfit(
-                                fontWeight: FontWeight.w700,
+                                fontWeight: FontWeight.w800,
                                 fontSize: 13,
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            SettingsStore.instance.formatMoney(cartSubtotal),
-                            style: GoogleFonts.outfit(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 13,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          const Icon(Icons.arrow_forward_rounded, size: 16),
-                        ],
+                            const SizedBox(width: 4),
+                            const Icon(Icons.arrow_forward_rounded, size: 16),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),

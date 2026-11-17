@@ -527,7 +527,11 @@ class FirebaseService {
     }
 
     final capped = limit <= 0 ? 50 : limit;
-    return _orders.where('userId', isEqualTo: uid).limit(capped).snapshots();
+    return _orders
+        .where('userId', isEqualTo: uid)
+        .orderBy('createdAt', descending: true)
+        .limit(capped)
+        .snapshots();
   }
 
   /// One-shot orders fetch (preferred over live listeners for dashboards).

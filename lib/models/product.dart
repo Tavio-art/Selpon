@@ -1,5 +1,7 @@
 
 class Product {
+  static const int lowStockThreshold = 10;
+
   // ==========================================
   // PRODUCT INFORMATION
   // ==========================================
@@ -57,7 +59,7 @@ class Product {
   // STOCK STATUS
   // ==========================================
 
-  bool get isLowStock => stock > 0 && stock <= 5;
+  bool get isLowStock => stock > 0 && stock <= lowStockThreshold;
 
   bool get isOutOfStock => stock == 0;
 

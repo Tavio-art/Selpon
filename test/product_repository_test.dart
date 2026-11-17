@@ -29,6 +29,26 @@ Product product({
 }
 
 void main() {
+  test('low stock uses the shared threshold and excludes zero stock', () {
+    expect(product(id: 'zero', name: 'Zero', stock: 0).isLowStock, isFalse);
+    expect(
+      product(
+        id: 'threshold',
+        name: 'At threshold',
+        stock: Product.lowStockThreshold,
+      ).isLowStock,
+      isTrue,
+    );
+    expect(
+      product(
+        id: 'above-threshold',
+        name: 'Above threshold',
+        stock: Product.lowStockThreshold + 1,
+      ).isLowStock,
+      isFalse,
+    );
+  });
+
   test("catalog values are overlaid by the user's product fields", () {
     final merged = ProductRepository.mergeCatalogAndInventory(
       catalog: [

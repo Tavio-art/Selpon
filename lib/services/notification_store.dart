@@ -188,7 +188,7 @@ class NotificationStore extends ChangeNotifier {
 
     for (final product in products) {
       if (product.isCatalogOnly || product.id.isEmpty) continue;
-      if (product.stock > 5) continue;
+      if (product.stock > Product.lowStockThreshold) continue;
 
       final key = product.key.isEmpty ? product.id : product.key;
       lowStockIds.add(key);
