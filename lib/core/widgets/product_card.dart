@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+
 import '../../l10n/app_localizations.dart';
 import '../../models/product.dart';
 import '../../services/settings_store.dart';
 import '../../widgets/product_image.dart';
 import '../theme/app_theme.dart';
 
-class ProductCard extends StatelessWidget {
+class ProductCard extends StatefulWidget {
   final Product product;
   final VoidCallback? onAddToCart;
   final VoidCallback? onEdit;
@@ -21,13 +22,57 @@ class ProductCard extends StatelessWidget {
   });
 
   @override
+  State<ProductCard> createState() => _ProductCardState();
+}
+
+class _ProductCardState extends State<ProductCard>
+    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
+  late final AnimationController _fadeController;
+  bool _fadeStarted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fadeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_fadeStarted) return;
+
+    _fadeStarted = true;
+    _fadeController.duration = MediaQuery.of(context).disableAnimations
+        ? Duration.zero
+        : const Duration(milliseconds: 280);
+    _fadeController.forward();
+  }
+
+  @override
+  void dispose() {
+    _fadeController.dispose();
+    super.dispose();
+  }
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
   Widget build(BuildContext context) {
+    super.build(context);
+    final product = widget.product;
+    final onAddToCart = widget.onAddToCart;
+    final onEdit = widget.onEdit;
+    final onTap = widget.onTap;
     final sari = context.sari;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
 
-    return ListenableBuilder(
+    final card = ListenableBuilder(
       listenable: SettingsStore.instance,
       builder: (context, _) {
         final money = SettingsStore.instance.formatMoney(product.price);
@@ -38,10 +83,7 @@ class ProductCard extends StatelessWidget {
             decoration: BoxDecoration(
               color: sari.cardSurface,
               borderRadius: BorderRadius.circular(22),
-              border: Border.all(
-                color: sari.cardBorder,
-                width: 1,
-              ),
+              border: Border.all(color: sari.cardBorder, width: 1),
               boxShadow: isDark
                   ? []
                   : [
@@ -59,14 +101,16 @@ class ProductCard extends StatelessWidget {
                 Expanded(
                   child: InkWell(
                     onTap: onTap ?? onAddToCart,
-                    borderRadius:
-                        const BorderRadius.vertical(top: Radius.circular(21)),
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(21),
+                    ),
                     child: Container(
                       width: double.infinity,
                       decoration: const BoxDecoration(
                         color: Colors.white,
-                        borderRadius:
-                            BorderRadius.vertical(top: Radius.circular(21)),
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(21),
+                        ),
                       ),
                       padding: const EdgeInsets.all(8),
                       child: ProductImage(
@@ -135,7 +179,9 @@ class ProductCard extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(24),
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 10, vertical: 6),
+                                    horizontal: 10,
+                                    vertical: 6,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: sari.accentAmber,
                                     borderRadius: BorderRadius.circular(24),
@@ -170,7 +216,9 @@ class ProductCard extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(24),
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 10, vertical: 6),
+                                    horizontal: 10,
+                                    vertical: 6,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: sari.accentAmber,
                                     borderRadius: BorderRadius.circular(24),
@@ -208,5 +256,6 @@ class ProductCard extends StatelessWidget {
         );
       },
     );
+    return FadeTransition(opacity: _fadeController, child: card);
   }
 }

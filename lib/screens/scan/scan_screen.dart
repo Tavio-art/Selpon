@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../../core/widgets/cart_added_popup.dart';
+import '../../data/product_categories.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/product.dart';
 import '../../services/cart_store.dart';
@@ -15,24 +17,6 @@ import '../../widgets/product_image.dart';
 import '../cart/cart_screen.dart';
 
 enum _ScanAction { choose, addInventory, checkout }
-
-/// Mga pagpipiliang category sa dropdown. Palitan kung may sariling listahan.
-const List<String> kProductCategories = [
-  'Beverages',
-  'Snacks',
-  'Candy & Sweets',
-  'Canned Goods',
-  'Instant Noodles',
-  'Condiments & Sauces',
-  'Rice & Grains',
-  'Dairy & Eggs',
-  'Bread & Bakery',
-  'Frozen',
-  'Personal Care',
-  'Household & Cleaning',
-  'Cigarettes',
-  'Others',
-];
 
 class ScanScreen extends StatefulWidget {
   final String? scannedBarcode;
@@ -70,7 +54,8 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   DateTime? _debounceUntil;
   _ScanAction _action = _ScanAction.choose;
   Timer? _cartToastTimer;
-  String? _cartToastMessage;
+  String? _cartToastProductName;
+  int _cartToastQuantity = 1;
 
   bool _permissionDenied = false;
   bool _permanentlyDenied = false;
@@ -150,7 +135,11 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
         state == AppLifecycleState.inactive) {
       unawaited(_controller.stop());
     } else if (state == AppLifecycleState.resumed) {
-      unawaited(_ensureCamera());
+      // Do not reclaim the camera while the Add Product sheet (or image
+      // picker) still needs it — that is what broke "Take photo".
+      if (!_sheetOpen && !_scanPaused) {
+        unawaited(_ensureCamera());
+      }
     }
   }
 
@@ -198,20 +187,29 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
         _scanPaused = false;
         _lastCode = null;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(result.message),
-          backgroundColor: sari.danger,
-        ),
-      );
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(result.message),
+            backgroundColor: sari.danger,
+          ),
+        );
       return;
     }
+
+    // Skip the intermediate choose screen: known products go to cart,
+    // unknown barcodes go straight to Add Product.
+    final nextAction = result.product != null
+        ? _ScanAction.checkout
+        : _ScanAction.addInventory;
 
     setState(() {
       _loading = false;
       _matchedProduct = result.product;
       _catalogSuggestion = result.catalogSuggestion;
       _busy = false;
+      _action = nextAction;
     });
 
     _debounceUntil = now.add(const Duration(seconds: 2));
@@ -220,19 +218,31 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
 
   Future<void> _openResultSheet(String code) async {
     if (!mounted || _sheetOpen) return;
-    _sheetOpen = true;
-    final bottomNavPad = 88.0 + MediaQuery.paddingOf(context).bottom;
+    setState(() {
+      _sheetOpen = true;
+      _scanPaused = true;
+    });
 
+    // Release the scanner camera so ImagePicker can open it for "Take photo".
+    try {
+      await _controller.stop();
+    } catch (e) {
+      debugPrint('[ScanScreen] camera stop before sheet failed: $e');
+    }
+    if (!mounted) return;
+
+    // Cover the floating navbar fully (MainShell uses extendBody). The old
+    // bottomNavPad left a transparent gap between sheet and nav.
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
+      useSafeArea: false,
       isDismissible: true,
       builder: (ctx) {
+        final keyboard = MediaQuery.viewInsetsOf(ctx).bottom;
         return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.viewInsetsOf(ctx).bottom + bottomNavPad,
-          ),
+          padding: EdgeInsets.only(bottom: keyboard),
           child: _ScanResultCard(
             product: _matchedProduct,
             catalogSuggestion: _catalogSuggestion,
@@ -240,18 +250,19 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
             action: _action,
             onActionChanged: (a) => setState(() => _action = a),
             onDismiss: () => Navigator.pop(ctx),
-            onRegistered: () {
-              Navigator.pop(ctx);
-              _clearResult();
-            },
+            onRegistered: () => Navigator.pop(ctx),
             onOpenCart: _openCart,
-            onCartAdded: _showCartAddedToast,
+            onCartAdded: _showCartAddedPopup,
           ),
         );
       },
     );
 
-    if (mounted) _clearResult();
+    if (!mounted) return;
+    _clearResult();
+    if (widget.isActive) {
+      unawaited(_ensureCamera());
+    }
   }
 
   void _openCart() {
@@ -264,12 +275,20 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
     );
   }
 
-  void _showCartAddedToast(String message) {
+  void _showCartAddedPopup(String productName, int quantity) {
+    final name = productName.trim();
+    if (name.isEmpty) return;
+
+    // Replace any queued SnackBars so they don't stack behind the toast.
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     _cartToastTimer?.cancel();
-    setState(() => _cartToastMessage = message);
-    _cartToastTimer = Timer(const Duration(seconds: 3), () {
+    setState(() {
+      _cartToastProductName = name;
+      _cartToastQuantity = quantity < 1 ? 1 : quantity;
+    });
+    _cartToastTimer = Timer(const Duration(seconds: 2), () {
       if (!mounted) return;
-      setState(() => _cartToastMessage = null);
+      setState(() => _cartToastProductName = null);
     });
   }
 
@@ -303,6 +322,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
         final sheetLift = _sheetOpen ? 120.0 : 0.0;
 
         return Scaffold(
+          resizeToAvoidBottomInset: true,
           backgroundColor: Theme.of(context).scaffoldBackgroundColor,
           body: Stack(
             children: [
@@ -411,93 +431,13 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
                     child: CircularProgressIndicator(color: sari.success),
                   ),
                 ),
-              if (_cartToastMessage != null)
-                Positioned(
-                  left: 16,
-                  right: 16,
-                  bottom: MediaQuery.paddingOf(context).bottom + 16,
-                  child: TweenAnimationBuilder<double>(
-                    tween: Tween<double>(begin: 0, end: 1),
-                    duration: const Duration(milliseconds: 220),
-                    curve: Curves.easeOutCubic,
-                    builder: (context, progress, child) => Opacity(
-                      opacity: progress,
-                      child: Transform.translate(
-                        offset: Offset(0, (1 - progress) * 10),
-                        child: child,
-                      ),
-                    ),
-                    child: Material(
-                      color: Colors.transparent,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: sari.cardSurfaceStrong,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: sari.success.withValues(alpha: 0.3),
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: sari.shadow,
-                              blurRadius: 18,
-                              offset: const Offset(0, 7),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 38,
-                              height: 38,
-                              decoration: BoxDecoration(
-                                color: sari.success.withValues(alpha: 0.14),
-                                shape: BoxShape.circle,
-                              ),
-                              child: Icon(
-                                Icons.check_rounded,
-                                color: sari.success,
-                                size: 21,
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                _cartToastMessage!,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: scheme.onSurface,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  height: 1.25,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            IconButton(
-                              tooltip: context.l10n.text('viewCart'),
-                              onPressed: _openCart,
-                              style: IconButton.styleFrom(
-                                backgroundColor: sari.warning,
-                                foregroundColor: sari.onAccent,
-                                fixedSize: const Size(40, 40),
-                                padding: EdgeInsets.zero,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              icon: const Icon(
-                                Icons.arrow_forward_rounded,
-                                size: 20,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
+              if (_cartToastProductName != null)
+                CartAddedPopup(
+                  productName: _cartToastProductName!,
+                  quantity: _cartToastQuantity,
+                  onViewCart: _openCart,
+                  // Full-bleed Stack under MainShell extendBody — clear nav + Scan FAB.
+                  insideSafeArea: false,
                 ),
             ],
           ),
@@ -665,7 +605,7 @@ class _ScanResultCard extends StatefulWidget {
   final VoidCallback onDismiss;
   final VoidCallback onRegistered;
   final VoidCallback onOpenCart;
-  final ValueChanged<String> onCartAdded;
+  final void Function(String productName, int quantity) onCartAdded;
 
   const _ScanResultCard({
     required this.product,
@@ -729,7 +669,16 @@ class _ScanResultCardState extends State<_ScanResultCard> {
   void _hydrateFromProduct() {
     final p = widget.product ?? widget.catalogSuggestion;
     _nameController.text = p?.name ?? '';
-    _category = (p != null && p.category.isNotEmpty) ? p.category : null;
+    final rawCategory = (p != null && p.category.isNotEmpty) ? p.category : null;
+    // Prefer an exact web-category match; otherwise leave null so the user picks.
+    if (rawCategory != null &&
+        ProductCategories.forPicker.contains(rawCategory)) {
+      _category = rawCategory;
+    } else if (rawCategory != null) {
+      _category = rawCategory; // shown once for legacy values, not added to web list permanently
+    } else {
+      _category = ProductCategories.forPicker.first;
+    }
     _priceController.text = p != null ? p.price.toStringAsFixed(2) : '';
     _stockController.text = '1';
     _imageUrl = p?.imageUrl ?? '';
@@ -746,29 +695,71 @@ class _ScanResultCardState extends State<_ScanResultCard> {
     super.dispose();
   }
 
-  Future<void> _pickImage() async {
-    final XFile? picked = await _picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 600,
-      imageQuality: 60,
-    );
-    if (picked == null) return;
-    final bytes = await picked.readAsBytes();
-    setState(() {
-      _imageUrl = 'data:image/jpeg;base64,${base64Encode(bytes)}';
-    });
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      if (source == ImageSource.camera) {
+        var status = await Permission.camera.status;
+        if (!status.isGranted) {
+          status = await Permission.camera.request();
+        }
+        if (!mounted) return;
+        if (!status.isGranted) {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(
+              SnackBar(
+                content: Text(context.l10n.text('cameraPermissionNeeded')),
+              ),
+            );
+          return;
+        }
+      }
+
+      final XFile? picked = await _picker.pickImage(
+        source: source,
+        maxWidth: 600,
+        imageQuality: 60,
+      );
+      if (picked == null) return; // user cancelled
+      final bytes = await picked.readAsBytes();
+      if (!mounted) return;
+      setState(() {
+        _imageUrl = 'data:image/jpeg;base64,${base64Encode(bytes)}';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              context.l10n.text(
+                'couldNotPickPhoto',
+                values: {'error': '$e'},
+              ),
+            ),
+            backgroundColor: sari.danger,
+          ),
+        );
+    }
+  }
+
+  void _clearImage() {
+    setState(() => _imageUrl = '');
   }
 
   Future<void> _onCheckoutAdd() async {
     final product = widget.product;
     if (product == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            context.l10n.text('scanAddToInventoryFirst'),
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              context.l10n.text('scanAddToInventoryFirst'),
+            ),
           ),
-        ),
-      );
+        );
       return;
     }
 
@@ -777,21 +768,23 @@ class _ScanResultCardState extends State<_ScanResultCard> {
     );
     final needed = alreadyInCart + _quantity;
     if (needed > product.stock) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            context.l10n.text(
-              'scanInsufficientStock',
-              values: {
-                'stock': '${product.stock}',
-                'cart': '$alreadyInCart',
-                'quantity': '$_quantity',
-              },
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              context.l10n.text(
+                'scanInsufficientStock',
+                values: {
+                  'stock': '${product.stock}',
+                  'cart': '$alreadyInCart',
+                  'quantity': '$_quantity',
+                },
+              ),
             ),
+            backgroundColor: sari.danger,
           ),
-          backgroundColor: sari.danger,
-        ),
-      );
+        );
       return;
     }
 
@@ -799,15 +792,17 @@ class _ScanResultCardState extends State<_ScanResultCard> {
       CartStore.instance.add(product, quantity: _quantity);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.l10n.text(
-            'failed',
-            values: {'error': '$e'},
-          )),
-          backgroundColor: sari.danger,
-        ),
-      );
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(context.l10n.text(
+              'failed',
+              values: {'error': '$e'},
+            )),
+            backgroundColor: sari.danger,
+          ),
+        );
       return;
     }
     debugPrint(
@@ -816,10 +811,15 @@ class _ScanResultCardState extends State<_ScanResultCard> {
     );
 
     if (!mounted) return;
-    widget.onCartAdded(context.l10n.text(
-      'addedToCartMessage',
-      values: {'quantity': '$_quantity', 'name': product.name},
-    ));
+    // Pass the resolved product name (not a pre-baked string / barcode label).
+    final productName = product.name.trim().isNotEmpty
+        ? product.name.trim()
+        : (widget.catalogSuggestion?.name.trim().isNotEmpty == true
+            ? widget.catalogSuggestion!.name.trim()
+            : product.sku.trim().isNotEmpty
+                ? product.sku.trim()
+                : widget.scannedCode);
+    widget.onCartAdded(productName, _quantity);
     widget.onDismiss();
   }
 
@@ -853,34 +853,55 @@ class _ScanResultCardState extends State<_ScanResultCard> {
       '[ScanScreen] Saving inventory barcode=${widget.scannedCode} qty=$qty',
     );
 
-    final result = await _scanService.addToInventory(
-      barcode: widget.scannedCode,
-      name: name,
-      category: _category ?? 'Uncategorized',
-      price: price,
-      quantity: qty,
-      imageUrl: _imageUrl,
-      addToExistingStock: widget.product != null,
-      catalogProductId: _catalogProductId,
-    );
+    late final ScanResult result;
+    try {
+      result = await _scanService.addToInventory(
+        barcode: widget.scannedCode,
+        name: name,
+        category: _category ?? ProductCategories.forPicker.first,
+        price: price,
+        quantity: qty,
+        imageUrl: _imageUrl,
+        addToExistingStock: widget.product != null,
+        catalogProductId: _catalogProductId,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              context.l10n.text(
+                'inventorySaveFailed',
+                values: {'error': '$e'},
+              ),
+            ),
+            backgroundColor: sari.danger,
+          ),
+        );
+      return;
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
 
     if (!mounted) return;
-    setState(() => _saving = false);
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
       SnackBar(
-        content: Text(result.message),
+        content: Text(
+          result.success
+              ? context.l10n.text('itemRegistered')
+              : result.message,
+        ),
         backgroundColor: result.success ? null : sari.danger,
+        duration: const Duration(seconds: 2),
       ),
     );
 
     if (result.success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.l10n.text('itemRegistered')),
-          duration: const Duration(seconds: 2),
-        ),
-      );
       widget.onRegistered();
     }
   }
@@ -973,12 +994,14 @@ class _ScanResultCardState extends State<_ScanResultCard> {
       return;
     }
 
+    final itemName = nameController.text.trim().isEmpty
+        ? fallbackItemName
+        : nameController.text.trim();
+
     try {
       CartStore.instance.addOneTime(
         barcode: widget.scannedCode,
-        name: nameController.text.trim().isEmpty
-            ? fallbackItemName
-            : nameController.text.trim(),
+        name: itemName,
         price: price,
       );
     } catch (e) {
@@ -995,24 +1018,31 @@ class _ScanResultCardState extends State<_ScanResultCard> {
       return;
     }
 
+    if (!mounted) return;
+    widget.onCartAdded(itemName, 1);
     widget.onDismiss();
   }
 
   @override
   Widget build(BuildContext context) {
     final product = widget.product;
-    final maxHeight = MediaQuery.of(context).size.height *
-        (_action == _ScanAction.choose ? 0.30 : 0.78);
+    final media = MediaQuery.of(context);
+    // Parent already padded for the keyboard; use remaining height so the
+    // sheet can sit flush to the screen bottom (covering the floating nav).
+    final maxHeight = (media.size.height - media.viewInsets.bottom) *
+        (_action == _ScanAction.choose ? 0.34 : 0.92);
+    final bottomPad = 14.0 + media.padding.bottom;
 
     return Container(
       constraints: BoxConstraints(maxHeight: maxHeight),
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+      padding: EdgeInsets.fromLTRB(16, 8, 16, bottomPad),
       decoration: BoxDecoration(
         gradient: sari.screenGradient,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         border: Border.all(color: sari.cardBorder),
       ),
       child: SingleChildScrollView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1240,16 +1270,18 @@ class _ScanResultCardState extends State<_ScanResultCard> {
   }
 
   Widget _buildCategoryDropdown() {
-    // Kung ang category ng existing product ay wala sa listahan, isama pa rin
-    // para hindi mag-crash ang dropdown.
+    // Exact same categories as the web app (ProductCategories / sari_web).
+    final webCategories = ProductCategories.forPicker;
     final options = <String>[
-      ...kProductCategories,
-      if (_category != null && !kProductCategories.contains(_category))
-        _category!,
+      ...webCategories,
+      if (_category != null && !webCategories.contains(_category)) _category!,
     ];
+    final selected =
+        (_category != null && options.contains(_category)) ? _category : null;
 
     return DropdownButtonFormField<String>(
-      value: _category,
+      key: ValueKey(selected),
+      initialValue: selected,
       isExpanded: true,
       dropdownColor: sari.cardSurfaceStrong,
       borderRadius: BorderRadius.circular(14),
@@ -1336,56 +1368,142 @@ class _ScanResultCardState extends State<_ScanResultCard> {
         ),
         const SizedBox(height: 16),
 
-        // Product photo
+        // Product photo — camera + gallery as separate labeled actions.
         _sectionLabel('Photo'),
-        Row(
-          children: [
-            InkWell(
-              onTap: _saving ? null : _pickImage,
-              borderRadius: BorderRadius.circular(16),
-              child: Container(
-                width: 76,
-                height: 76,
-                decoration: BoxDecoration(
-                  color: sari.fieldFill.withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: sari.cardBorder),
+        if (_imageUrl.isNotEmpty) ...[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: ProductImage(
+                  imageUrl: _imageUrl,
+                  width: 88,
+                  height: 88,
+                  fit: BoxFit.cover,
                 ),
-                clipBehavior: Clip.antiAlias,
-                child: _imageUrl.isEmpty
-                    ? Icon(Icons.add_a_photo_outlined,
-                        color: sari.mutedText, size: 26)
-                    : ProductImage(
-                        imageUrl: _imageUrl,
-                        width: 76,
-                        height: 76,
-                        fit: BoxFit.cover,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _saving
+                          ? null
+                          : () => _pickImage(ImageSource.camera),
+                      icon: const Icon(Icons.photo_camera_outlined, size: 18),
+                      label: Text(
+                        context.l10n.text('takePhoto'),
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: sari.success,
+                        side: BorderSide(
+                          color: sari.success.withValues(alpha: 0.6),
+                        ),
+                        minimumSize: const Size.fromHeight(42),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: _saving
+                          ? null
+                          : () => _pickImage(ImageSource.gallery),
+                      icon: const Icon(Icons.photo_library_outlined, size: 18),
+                      label: Text(
+                        context.l10n.text('attachPicture'),
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: sari.success,
+                        side: BorderSide(
+                          color: sari.success.withValues(alpha: 0.6),
+                        ),
+                        minimumSize: const Size.fromHeight(42),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: _saving ? null : _clearImage,
+                      icon: Icon(Icons.delete_outline,
+                          size: 18, color: sari.danger),
+                      label: Text(
+                        context.l10n.text('removePhoto'),
+                        style: TextStyle(
+                          color: sari.danger,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _saving ? null : _pickImage,
-                icon: const Icon(Icons.photo_library_outlined, size: 18),
-                label: Text(
-                  context.l10n.text(
-                    _imageUrl.isEmpty ? 'attachPicture' : 'changePicture',
+            ],
+          ),
+        ] else
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed:
+                      _saving ? null : () => _pickImage(ImageSource.camera),
+                  icon: const Icon(Icons.photo_camera_outlined, size: 18),
+                  label: Text(
+                    context.l10n.text('takePhoto'),
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                  style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w600),
-                ),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: sari.success,
-                  side: BorderSide(color: sari.success.withValues(alpha: 0.6)),
-                  minimumSize: const Size.fromHeight(48),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: sari.success,
+                    side:
+                        BorderSide(color: sari.success.withValues(alpha: 0.6)),
+                    minimumSize: const Size.fromHeight(48),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ],
-        ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed:
+                      _saving ? null : () => _pickImage(ImageSource.gallery),
+                  icon: const Icon(Icons.photo_library_outlined, size: 18),
+                  label: Text(
+                    context.l10n.text('attachPicture'),
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: sari.success,
+                    side:
+                        BorderSide(color: sari.success.withValues(alpha: 0.6)),
+                    minimumSize: const Size.fromHeight(48),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         const SizedBox(height: 16),
 
         // Details

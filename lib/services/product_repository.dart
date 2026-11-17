@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/product.dart';
+import 'notification_store.dart';
 
 class ProductRepository {
   ProductRepository({FirebaseFirestore? firestore})
@@ -480,6 +481,7 @@ class ProductRepository {
     _lastSharedProducts = merged;
 
     controller.add(merged);
+    unawaited(NotificationStore.instance.updateInventory(merged));
   }
 
   void _tearDownSharedProductsWatch() {

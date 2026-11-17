@@ -8,6 +8,8 @@ class StatCard extends StatelessWidget {
   final Color? valueColor;
   final IconData? icon;
   final Color? iconColor;
+  final bool selected;
+  final VoidCallback? onTap;
 
   const StatCard({
     super.key,
@@ -16,19 +18,30 @@ class StatCard extends StatelessWidget {
     this.valueColor,
     this.icon,
     this.iconColor,
+    this.selected = false,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final sari = context.sari;
     final scheme = Theme.of(context).colorScheme;
+    final borderColor = selected ? scheme.primary : sari.cardBorder;
+    final fill = selected
+        ? scheme.primary.withValues(alpha: 0.10)
+        : sari.cardSurface;
 
-    return Container(
+    final card = AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        color: sari.cardSurface,
+        color: fill,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: sari.cardBorder, width: 1),
+        border: Border.all(
+          color: borderColor,
+          width: selected ? 1.6 : 1,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -72,6 +85,17 @@ class StatCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+
+    if (onTap == null) return card;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: card,
       ),
     );
   }

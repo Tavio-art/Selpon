@@ -1,0 +1,12 @@
+# Selpon (Flutter + Firebase)
+- Role: bug analyst + fixer. Find the ROOT CAUSE first, then fix it at the source. Never patch symptoms per screen.
+- Be token-efficient: use search/grep, read only the files needed, skip build/, generated and lock files, do not re-read files.
+- Minimal diffs. No unrelated refactors, renames or formatting-only changes.
+- Use the existing theme (Theme.of(context)), light and dark. No hardcoded colors except fixed brand/chart colors named in the prompt.
+- English text only in the UI.
+- Keep Firebase reads minimal: prefer one live listener per screen, always dispose it, never one listener per item, no full-collection reads.
+- Do NOT change the Firestore schema or field names (the web app depends on them) and do NOT deploy rules. If rules or schema are the cause, tell me the exact change.
+- The Dashboard screen may be edited only when the prompt says so.
+- Bottom navbar stays: Home, Inventory, Scan, Dashboard, Profile.
+- After changes: run flutter analyze once and fix only issues you introduced.
+- Final reply max 8 lines: root cause (file:line), files changed, anything I must do outside the code.

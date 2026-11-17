@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
+import '../../core/widgets/app_bottom_nav.dart';
+import '../../core/widgets/app_page_header.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_search_bar.dart';
 import '../../core/widgets/app_snackbar.dart';
+import '../../core/widgets/cart_added_popup.dart';
 import '../../core/widgets/category_chip.dart';
 import '../../core/widgets/empty_state.dart';
 import '../../core/widgets/loading_indicator.dart';
@@ -12,10 +16,9 @@ import '../../core/widgets/section_header.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/product.dart';
 import '../../services/cart_store.dart';
+import '../../services/notification_store.dart';
 import '../../services/product_repository.dart';
-import '../../services/settings_store.dart';
 import '../../services/user_profile_store.dart';
-import '../../widgets/product_image.dart';
 
 class HomeScreen extends StatefulWidget {
   final String? userName;
@@ -43,6 +46,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _cartPopupTimer;
   bool _showCartPopup = false;
   String? _lastAddedProductName;
+  int _lastAddedQuantity = 1;
 
   @override
   void initState() {
@@ -178,12 +182,13 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    _cartPopupTimer?.cancel();
     setState(() {
-      _lastAddedProductName = product.name;
+      _lastAddedProductName = product.name.trim();
+      _lastAddedQuantity = 1;
       _showCartPopup = true;
     });
-
-    _cartPopupTimer?.cancel();
 
     _cartPopupTimer = Timer(const Duration(seconds: 2), () {
       if (!mounted) return;
@@ -191,77 +196,12 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  Widget _iconCircle({
-    required IconData icon,
-    VoidCallback? onTap,
-    int badgeCount = 0,
-  }) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final sari = context.sari;
-
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(22),
-            child: Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: sari.fieldFill,
-                border: Border.all(
-                  color: sari.cardBorder,
-                  width: 1,
-                ),
-              ),
-              child: Icon(
-                icon,
-                size: 20,
-                color: scheme.onSurface,
-              ),
-            ),
-          ),
-        ),
-        if (badgeCount > 0)
-          Positioned(
-            right: -2,
-            top: -2,
-            child: Container(
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                color: sari.danger,
-                shape: BoxShape.circle,
-              ),
-              constraints: const BoxConstraints(
-                minWidth: 18,
-                minHeight: 18,
-              ),
-              child: Text(
-                badgeCount > 9 ? '9+' : '$badgeCount',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.outfit(
-                  color: Colors.white,
-                  fontSize: 9,
-                  fontWeight: FontWeight.bold,
-                  height: 1,
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
     final sari = context.sari;
+    final scheme = theme.colorScheme;
+    final locale = Localizations.localeOf(context).languageCode;
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -275,9 +215,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ]),
           builder: (context, _) {
             final cartItemCount = CartStore.instance.itemCount;
-            final cartSubtotal = CartStore.instance.subtotal;
-            final displayName = _profile.headerName;
-            final profilePhotoUrl = _profile.photoUrl;
+            // Home draws under the floating nav — clear bar + Scan FAB + gap.
+            final navBottomInset = AppBottomNav.bodyBottomInset(context);
             final productStream = _products.watchProducts();
 
             return Stack(
@@ -287,85 +226,121 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const SizedBox(height: 10),
-                      
-                      // Header Profile Bar
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Material(
-                              color: Colors.transparent,
-                              child: InkWell(
-                                onTap: widget.onOpenProfile,
-                                borderRadius: BorderRadius.circular(28),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 4),
-                                  child: Row(
-                                    children: [
-                                      CircleAvatar(
-                                        radius: 22,
-                                        backgroundColor: sari.fieldFill,
-                                        child: profilePhotoUrl.isNotEmpty
-                                            ? ClipOval(
-                                                child: ProductImage(
-                                                  imageUrl: profilePhotoUrl,
-                                                  width: 44,
-                                                  height: 44,
-                                                  fit: BoxFit.cover,
-                                                ),
-                                              )
-                                            : Text(
-                                                displayName.isNotEmpty
-                                                    ? displayName[0].toUpperCase()
-                                                    : 'U',
-                                                style: GoogleFonts.outfit(
-                                                  color: scheme.onSurface,
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 16,
-                                                ),
-                                              ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(0, 6, 4, 4),
+                        child: SizedBox(
+                          height: 56,
+                          child: Row(
+                            children: [
+                              AppPageHeader.iconBadge(
+                                context: context,
+                                icon: Icons.home_rounded,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      context.l10n.text('navHome'),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: GoogleFonts.outfit(
+                                        color: scheme.onSurface,
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.w800,
                                       ),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              context.l10n.text('welcomeBack'),
-                                              style: GoogleFonts.outfit(
-                                                color: sari.mutedText,
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w500,
-                                              ),
-                                            ),
-                                            Text(
-                                              displayName,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: GoogleFonts.outfit(
-                                                color: scheme.onSurface,
-                                                fontSize: 17,
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      DateFormat('EEEE, MMM d', locale)
+                                          .format(DateTime.now()),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: GoogleFonts.outfit(
+                                        color: sari.mutedText,
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w500,
                                       ),
-                                    ],
-                                  ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                            ),
+                              const SizedBox(width: 8),
+                              ListenableBuilder(
+                                listenable: NotificationStore.instance,
+                                builder: (context, _) {
+                                  final unread =
+                                      NotificationStore.instance.unreadCount;
+                                  return SizedBox(
+                                    width: 44,
+                                    height: 44,
+                                    child: Stack(
+                                      clipBehavior: Clip.none,
+                                      children: [
+                                        IconButton(
+                                          tooltip: 'Notifications',
+                                          onPressed: widget.onOpenNotif,
+                                          padding: EdgeInsets.zero,
+                                          constraints:
+                                              const BoxConstraints.tightFor(
+                                            width: 44,
+                                            height: 44,
+                                          ),
+                                          splashRadius: 22,
+                                          icon: Icon(
+                                            Icons.notifications_outlined,
+                                            color: scheme.onSurface,
+                                            size: 23,
+                                          ),
+                                        ),
+                                        if (unread > 0)
+                                          Positioned(
+                                            top: -2,
+                                            right: -2,
+                                            child: Container(
+                                              constraints: const BoxConstraints(
+                                                minWidth: 18,
+                                                minHeight: 18,
+                                              ),
+                                              padding: const EdgeInsets.all(3),
+                                              decoration: BoxDecoration(
+                                                color: sari.danger,
+                                                shape: BoxShape.circle,
+                                                border: Border.all(
+                                                  color: theme.scaffoldBackgroundColor,
+                                                  width: 1.5,
+                                                ),
+                                              ),
+                                              child: Text(
+                                                unread > 9 ? '9+' : '$unread',
+                                                textAlign: TextAlign.center,
+                                                style: GoogleFonts.outfit(
+                                                  color: scheme.onError,
+                                                  fontSize: 9,
+                                                  fontWeight: FontWeight.w700,
+                                                  height: 1,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                              const SizedBox(width: 12),
+                              AppPageHeader.avatarAction(
+                                context: context,
+                                onTap: widget.onOpenProfile,
+                              ),
+                            ],
                           ),
-                          _iconCircle(
-                            icon: Icons.shopping_cart_outlined,
-                            onTap: _goToCart,
-                            badgeCount: cartItemCount,
-                          ),
-                        ],
+                        ),
                       ),
-                      const SizedBox(height: 16),
-                      
+                      const SizedBox(height: 12),
+
                       // Search Bar
                       AppSearchBar(
                         controller: _searchController,
@@ -517,9 +492,10 @@ class _HomeScreenState extends State<HomeScreen> {
                             return GridView.builder(
                               physics: const BouncingScrollPhysics(),
                               padding: EdgeInsets.only(
-                                bottom: _showCartPopup && cartItemCount > 0
-                                    ? 220
-                                    : 110,
+                                bottom: navBottomInset +
+                                    (_showCartPopup && cartItemCount > 0
+                                        ? 96
+                                        : 0),
                               ),
                               itemCount: filteredProducts.length,
                               gridDelegate:
@@ -545,144 +521,16 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
 
-                // Floating "Added to Cart" Toast Popup
-                if (_showCartPopup && cartItemCount > 0)
-                  Positioned(
-                    left: 20,
-                    right: 20,
-                    bottom: 96,
-                    child: ListenableBuilder(
-                      listenable: SettingsStore.instance,
-                      builder: (context, _) {
-                        return TweenAnimationBuilder<double>(
-                          tween: Tween<double>(begin: 0, end: 1),
-                          duration: const Duration(milliseconds: 220),
-                          curve: Curves.easeOutCubic,
-                          builder: (context, progress, child) => Opacity(
-                            opacity: progress,
-                            child: Transform.translate(
-                              offset: Offset(0, (1 - progress) * 12),
-                              child: child,
-                            ),
-                          ),
-                          child: Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: sari.cardSurface,
-                              borderRadius: BorderRadius.circular(22),
-                              border: Border.all(
-                                color: sari.cardBorder,
-                                width: 1,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: sari.shadow,
-                                  blurRadius: 18,
-                                  offset: const Offset(0, 6),
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Row(
-                                  children: [
-                                    Container(
-                                      width: 38,
-                                      height: 38,
-                                      decoration: BoxDecoration(
-                                        color: sari.accentAmber
-                                            .withValues(alpha: 0.2),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: Icon(
-                                        Icons.check_rounded,
-                                        color: sari.accentAmber,
-                                        size: 22,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Text(
-                                        context.l10n.text(
-                                          'addedToCartMessage',
-                                          values: {
-                                            'quantity': '1',
-                                            'name': _lastAddedProductName ?? '',
-                                          },
-                                        ),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: GoogleFonts.outfit(
-                                          color: scheme.onSurface,
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                          height: 1.25,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 12),
-                                SizedBox(
-                                  width: double.infinity,
-                                  height: 46,
-                                  child: ElevatedButton(
-                                    onPressed: _goToCart,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: sari.accentAmber,
-                                      foregroundColor: sari.onAccentAmber,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 16,
-                                      ),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(24),
-                                      ),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            context.l10n.text(
-                                              cartItemCount > 1
-                                                  ? 'viewCartItemsPlural'
-                                                  : 'viewCartItems',
-                                              values: {
-                                                'count': '$cartItemCount',
-                                              },
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: GoogleFonts.outfit(
-                                              fontWeight: FontWeight.w700,
-                                              fontSize: 14,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          SettingsStore.instance
-                                              .formatMoney(cartSubtotal),
-                                          style: GoogleFonts.outfit(
-                                            fontWeight: FontWeight.w800,
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 6),
-                                        const Icon(
-                                          Icons.arrow_forward_rounded,
-                                          size: 18,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                // Floating "Added to Cart" toast (shared with Scan).
+                // Home SafeArea is bottom:false — clear the full floating nav.
+                if (_showCartPopup &&
+                    cartItemCount > 0 &&
+                    (_lastAddedProductName?.isNotEmpty ?? false))
+                  CartAddedPopup(
+                    productName: _lastAddedProductName!,
+                    quantity: _lastAddedQuantity,
+                    onViewCart: _goToCart,
+                    insideSafeArea: false,
                   ),
               ],
             );

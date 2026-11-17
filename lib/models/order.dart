@@ -37,7 +37,7 @@ class StoreOrder {
   });
 
   factory StoreOrder.fromFirestore(String id, Map<String, dynamic> data) {
-    final rawItems = data['items'];
+    final rawItems = data['items'] ?? data['products'];
     final items = <Map<String, dynamic>>[];
     if (rawItems is List) {
       for (final item in rawItems) {
@@ -58,13 +58,22 @@ class StoreOrder {
     }
 
     DateTime? createdAt;
-    final created = data['createdAt'];
+    final created = data['createdAt'] ?? data['created_at'] ?? data['date'];
     if (created is Timestamp) {
       createdAt = created.toDate();
-    } else {
-      // Fallback for brand-new writes before serverTimestamp resolves,
-      // and for any docs that only have a client millis field.
-      final ms = data['createdAtMs'];
+    } else if (created is DateTime) {
+      createdAt = created;
+    } else if (created is String) {
+      createdAt = DateTime.tryParse(created);
+    } else if (created is num) {
+      final epoch = created.toInt();
+      createdAt = DateTime.fromMillisecondsSinceEpoch(
+        epoch.abs() < 100000000000 ? epoch * 1000 : epoch,
+      );
+    }
+
+    if (createdAt == null) {
+      final ms = data['createdAtMs'] ?? data['created_at_ms'];
       if (ms is num) {
         createdAt = DateTime.fromMillisecondsSinceEpoch(ms.toInt());
       }
@@ -77,15 +86,26 @@ class StoreOrder {
           )
         : (data['itemCount'] as num?)?.toInt() ?? 0;
 
-    final name = (data['customerName'] ?? '').toString().trim();
+    final name = (data['customerName'] ?? data['customer_name'] ?? '')
+        .toString()
+        .trim();
+    final rawTotal =
+        data['totalAmount'] ??
+        data['total_amount'] ??
+        data['total'] ??
+        data['amount'];
+    final total = rawTotal is num
+        ? rawTotal.toDouble()
+        : double.tryParse(rawTotal?.toString() ?? '') ?? 0;
 
     return StoreOrder(
-      id: (data['orderId'] ?? id).toString(),
+      id: (data['orderId'] ?? data['transactionId'] ?? id).toString(),
       customerName: name.isEmpty ? 'Walk-in' : name,
       itemCount: itemCount,
-      total: (data['totalAmount'] as num?)?.toDouble() ?? 0,
+      total: total,
       status: status,
-      paymentMethod: (data['paymentMethod'] ?? '').toString(),
+      paymentMethod: (data['paymentMethod'] ?? data['payment_method'] ?? '')
+          .toString(),
       createdAt: createdAt,
       items: items,
     );

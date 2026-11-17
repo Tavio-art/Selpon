@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/app_bottom_nav.dart';
 import '../../core/widgets/app_card.dart';
+import '../../core/widgets/app_page_header.dart';
 import '../../core/widgets/app_text_field.dart';
 import '../../core/widgets/confirm_dialog.dart';
 import '../../core/widgets/empty_state.dart';
@@ -10,7 +12,6 @@ import '../../core/widgets/loading_indicator.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/product.dart';
 import '../../services/firebase_service.dart';
-import '../../services/notification_store.dart';
 import '../../services/product_repository.dart';
 import '../../services/settings_store.dart';
 import '../../services/user_profile_store.dart';
@@ -29,11 +30,14 @@ class InventoryScreen extends StatefulWidget {
   State<InventoryScreen> createState() => _InventoryScreenState();
 }
 
+enum _InventoryFilter { all, lowStock, bestSellers, outOfStock }
+
 class _InventoryScreenState extends State<InventoryScreen> {
   final ProductRepository _products = ProductRepository.instance;
   final UserProfileStore _profile = UserProfileStore.instance;
   final FirebaseService _firebase = FirebaseService();
   final _searchController = TextEditingController();
+  _InventoryFilter _filter = _InventoryFilter.all;
 
   @override
   void initState() {
@@ -45,7 +49,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
     _products.refreshProducts();
   }
 
-  int _bestSellerQuantity(
+  /// Sold qty keyed by product id (same matching rules as the old best-seller card).
+  Map<String, int> _soldQuantities(
     List<Product> products,
     QuerySnapshot? orders,
   ) {
@@ -72,6 +77,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
         final productKey = productKeys[barcode];
         if (productKey == null) continue;
         final quantity = (item['quantity'] as num?)?.toInt() ?? 0;
+        if (quantity <= 0) continue;
         quantities.update(
           productKey,
           (previous) => previous + quantity,
@@ -79,8 +85,38 @@ class _InventoryScreenState extends State<InventoryScreen> {
         );
       }
     }
-    return quantities.values
-        .fold<int>(0, (best, quantity) => quantity > best ? quantity : best);
+    return quantities;
+  }
+
+  /// Top sellers by units sold (up to 5) — card count matches filtered list size.
+  Set<String> _bestSellerIds(
+    List<Product> products,
+    QuerySnapshot? orders,
+  ) {
+    final quantities = _soldQuantities(products, orders);
+    if (quantities.isEmpty) return {};
+    final ranked = quantities.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return ranked.take(5).map((e) => e.key).toSet();
+  }
+
+  /// Web-aligned inventory value: Σ (price × stock).
+  double _inventoryValue(List<Product> products) {
+    return products.fold<double>(
+      0,
+      (total, p) => total + (p.price * p.stock),
+    );
+  }
+
+  void _onFilterTap(_InventoryFilter next) {
+    setState(() {
+      // Tap active filter again (or Total Items) → show all.
+      if (next == _InventoryFilter.all || _filter == next) {
+        _filter = _InventoryFilter.all;
+      } else {
+        _filter = next;
+      }
+    });
   }
 
   @override
@@ -239,17 +275,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
                     updated,
                     oldInventoryId: product.id,
                   );
-                  await NotificationStore.instance.addInventoryEvent(
-                    action: 'edited',
-                    productName: updated.name,
-                    stock: updated.stock,
-                  );
-                  if (updated.isLowStock || updated.isOutOfStock) {
-                    await NotificationStore.instance.addLowStockAlert(
-                      productName: updated.name,
-                      stock: updated.stock,
-                    );
-                  }
                   if (dialogCtx.mounted) Navigator.pop(dialogCtx);
                 } catch (e) {
                   if (!dialogCtx.mounted) return;
@@ -293,10 +318,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
     if (confirm != true) return;
     try {
       await _products.deleteProduct(product);
-      await NotificationStore.instance.addInventoryEvent(
-        action: 'deleted',
-        productName: product.name,
-      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(context.l10n.text('productRemoved'))),
@@ -536,7 +557,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
                       )
                     : ListView.separated(
                         physics: const BouncingScrollPhysics(),
-                        padding: const EdgeInsets.only(bottom: 90),
+                        padding: EdgeInsets.only(
+                          bottom: AppBottomNav.bodyBottomInset(context),
+                        ),
                         itemCount: items.length,
                         separatorBuilder: (_, __) => Divider(
                           color: sari.cardBorder,
@@ -574,74 +597,31 @@ class _InventoryScreenState extends State<InventoryScreen> {
       child: Scaffold(
         backgroundColor: theme.scaffoldBackgroundColor,
         body: SafeArea(
+          bottom: false,
           child: ListenableBuilder(
             listenable: Listenable.merge([
               _profile,
               _products.productsWatchGeneration,
+              SettingsStore.instance,
             ]),
             builder: (context, _) {
               final storeName = _profile.headerStoreName;
               final productStream = _products.watchProducts();
 
               return Padding(
-                padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
+                padding: const EdgeInsets.fromLTRB(18, 6, 18, 0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: sari.fieldFill,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: sari.cardBorder,
-                              width: 1,
-                            ),
-                          ),
-                          child: Icon(
-                            Icons.storefront_rounded,
-                            color: scheme.primary,
-                            size: 24,
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                storeName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.outfit(
-                                  color: scheme.onSurface,
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.w800,
-                                  height: 1.15,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                context.l10n.text('manageStore'),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.outfit(
-                                  color:
-                                      scheme.onSurface.withValues(alpha: 0.65),
-                                  fontSize: 12.5,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                    AppPageHeader(
+                      leading: AppPageHeader.iconBadge(
+                        context: context,
+                        icon: Icons.storefront_rounded,
+                      ),
+                      title: storeName,
+                      subtitle: context.l10n.text('manageStore'),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
                     TextField(
                       controller: _searchController,
                       onChanged: (_) => setState(() {}),
@@ -714,90 +694,182 @@ class _InventoryScreenState extends State<InventoryScreen> {
                           }
 
                           final products = snapshot.data!;
-
-                          final filteredProducts = products.where((p) {
-                            final query = _searchController.text.toLowerCase();
-                            return p.name.toLowerCase().contains(query) ||
-                                p.barcode.toLowerCase().contains(query) ||
-                                p.category.toLowerCase().contains(query);
-                          }).toList();
-
                           final totalItems = products.length;
-                          
-                          // Dynamic at totoong kalkulasyon ng low stock at out of stock batay sa mga produkto
-                          final lowStock = products.where((p) => p.isLowStock).length;
-                          final outOfStock = products.where((p) => p.isOutOfStock).length;
+                          final lowStockItems =
+                              products.where((p) => p.isLowStock).toList();
+                          final outOfStockItems =
+                              products.where((p) => p.isOutOfStock).toList();
+                          final inventoryValue = _inventoryValue(products);
 
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
+                          return StreamBuilder<QuerySnapshot>(
+                            stream: _firebase.getOrdersStream(limit: 200),
+                            builder: (context, ordersSnapshot) {
+                              final bestSellerIds = ordersSnapshot.hasError
+                                  ? <String>{}
+                                  : _bestSellerIds(
+                                      products,
+                                      ordersSnapshot.data,
+                                    );
+                              final bestSellerItems = products
+                                  .where((p) => bestSellerIds.contains(p.id))
+                                  .toList();
+
+                              final query =
+                                  _searchController.text.toLowerCase().trim();
+                              bool matchesSearch(Product p) {
+                                if (query.isEmpty) return true;
+                                return p.name.toLowerCase().contains(query) ||
+                                    p.barcode.toLowerCase().contains(query) ||
+                                    p.category.toLowerCase().contains(query);
+                              }
+
+                              late final List<Product> source;
+                              late final String emptyMessage;
+                              switch (_filter) {
+                                case _InventoryFilter.lowStock:
+                                  source = lowStockItems;
+                                  emptyMessage =
+                                      context.l10n.text('noLowStockItems');
+                                  break;
+                                case _InventoryFilter.bestSellers:
+                                  source = bestSellerItems;
+                                  emptyMessage =
+                                      context.l10n.text('noBestSellerItems');
+                                  break;
+                                case _InventoryFilter.outOfStock:
+                                  source = outOfStockItems;
+                                  emptyMessage =
+                                      context.l10n.text('noOutOfStockItems');
+                                  break;
+                                case _InventoryFilter.all:
+                                  source = products;
+                                  emptyMessage =
+                                      context.l10n.text('noProducts');
+                                  break;
+                              }
+
+                              final filteredProducts =
+                                  source.where(matchesSearch).toList();
+
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Expanded(
-                                    child: StatCard(
-                                      label:
-                                          context.l10n.text('totalItemsStat'),
-                                      value: '$totalItems',
-                                      icon: Icons.inventory_2_outlined,
-                                    ),
+                                  StatCard(
+                                    label: context.l10n
+                                        .text('inventoryValueStat'),
+                                    value: SettingsStore.instance
+                                        .formatMoney(inventoryValue),
+                                    icon: Icons.payments_outlined,
                                   ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: StatCard(
-                                      label: context.l10n.text('lowStockStat'),
-                                      value: '$lowStock',
-                                      valueColor: lowStock > 0 ? sari.accentAmber : null,
-                                      icon: Icons.warning_amber_rounded,
-                                      iconColor: sari.accentAmber,
-                                    ),
+                                  const SizedBox(height: 10),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: StatCard(
+                                          label: context.l10n
+                                              .text('totalItemsStat'),
+                                          value: '$totalItems',
+                                          icon: Icons.inventory_2_outlined,
+                                          selected: _filter ==
+                                              _InventoryFilter.all,
+                                          onTap: () => _onFilterTap(
+                                            _InventoryFilter.all,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: StatCard(
+                                          label: context.l10n
+                                              .text('lowStockStat'),
+                                          value: '${lowStockItems.length}',
+                                          valueColor: lowStockItems.isNotEmpty
+                                              ? sari.accentAmber
+                                              : null,
+                                          icon: Icons.warning_amber_rounded,
+                                          iconColor: sari.accentAmber,
+                                          selected: _filter ==
+                                              _InventoryFilter.lowStock,
+                                          onTap: () => _onFilterTap(
+                                            _InventoryFilter.lowStock,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ],
-                              ),
-                              const SizedBox(height: 10),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: StreamBuilder<QuerySnapshot>(
-                                      stream:
-                                          _firebase.getOrdersStream(limit: 200),
-                                      builder: (context, ordersSnapshot) {
-                                        final value = ordersSnapshot.hasError
-                                            ? '—'
-                                            : '${_bestSellerQuantity(
-                                                products,
-                                                ordersSnapshot.data,
-                                              )}';
-                                        return StatCard(
+                                  const SizedBox(height: 10),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: StatCard(
                                           label: context.l10n
                                               .text('bestSellersStat'),
-                                          value: value,
+                                          value: ordersSnapshot.hasError
+                                              ? '—'
+                                              : '${bestSellerItems.length}',
                                           icon: Icons.trending_up_rounded,
-                                        );
-                                      },
-                                    ),
+                                          selected: _filter ==
+                                              _InventoryFilter.bestSellers,
+                                          onTap: ordersSnapshot.hasError
+                                              ? null
+                                              : () => _onFilterTap(
+                                                    _InventoryFilter
+                                                        .bestSellers,
+                                                  ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: StatCard(
+                                          label: context.l10n
+                                              .text('outOfStockStat'),
+                                          value: '${outOfStockItems.length}',
+                                          valueColor:
+                                              outOfStockItems.isNotEmpty
+                                                  ? sari.danger
+                                                  : null,
+                                          icon: Icons
+                                              .remove_circle_outline_rounded,
+                                          iconColor: sari.danger,
+                                          selected: _filter ==
+                                              _InventoryFilter.outOfStock,
+                                          onTap: () => _onFilterTap(
+                                            _InventoryFilter.outOfStock,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                  const SizedBox(width: 10),
+                                  const SizedBox(height: 12),
                                   Expanded(
-                                    child: StatCard(
-                                      label:
-                                          context.l10n.text('outOfStockStat'),
-                                      value: '$outOfStock',
-                                      valueColor: outOfStock > 0 ? sari.danger : null,
-                                      icon: Icons.remove_circle_outline_rounded,
-                                      iconColor: sari.danger,
-                                    ),
+                                    child: filteredProducts.isEmpty
+                                        ? AppCard(
+                                            padding: const EdgeInsets.all(24),
+                                            child: Center(
+                                              child: Text(
+                                                query.isNotEmpty &&
+                                                        source.isNotEmpty
+                                                    ? context.l10n
+                                                        .text('noProducts')
+                                                    : emptyMessage,
+                                                textAlign: TextAlign.center,
+                                                style: GoogleFonts.outfit(
+                                                  color: sari.mutedText,
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
+                                            ),
+                                          )
+                                        : _inventoryTable(
+                                            filteredProducts,
+                                            scheme,
+                                            sari,
+                                          ),
                                   ),
                                 ],
-                              ),
-                              const SizedBox(height: 12),
-                              Expanded(
-                                child: _inventoryTable(
-                                  filteredProducts,
-                                  scheme,
-                                  sari,
-                                ),
-                              ),
-                            ],
+                              );
+                            },
                           );
                         },
                       ),

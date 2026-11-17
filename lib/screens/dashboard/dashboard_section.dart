@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -7,46 +8,45 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/widgets/app_bottom_nav.dart';
+import '../../core/widgets/app_page_header.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/order.dart';
 import '../../services/firebase_service.dart';
+import '../../services/notification_store.dart';
 import '../../services/settings_store.dart';
 import '../../theme/app_theme.dart';
-import '../../widgets/stat_card.dart';
 import 'dashboard_metrics.dart';
 
-enum _ChartPeriod { day, week, month, year }
+/// Web-aligned category labels used for the Sales by Category donut.
+const _kWebCategories = <String>[
+  'Beverages',
+  'Coffee & Tea',
+  'Snacks',
+  'Noodles',
+  'Canned Goods',
+  'Condiments',
+  'Personal Care',
+  'Household',
+];
 
-extension on _ChartPeriod {
-  String label(AppLocalizations l10n) {
-    switch (this) {
-      case _ChartPeriod.day:
-        return l10n.text('todayPeriod');
-      case _ChartPeriod.week:
-        return l10n.text('thisWeek');
-      case _ChartPeriod.month:
-        return l10n.text('thisMonth');
-      case _ChartPeriod.year:
-        return l10n.text('thisYear');
-    }
-  }
+const _kCategoryColors = <Color>[
+  Color(0xFF2E7D4F),
+  Color(0xFF4CAF71),
+  Color(0xFFC9A227),
+  Color(0xFF5B8DEF),
+  Color(0xFFE07A3D),
+  Color(0xFF8B5CF6),
+  Color(0xFF14B8A6),
+  Color(0xFFEF4444),
+  Color(0xFF94A3B8),
+];
 
-  String pickerLabel(AppLocalizations l10n) {
-    switch (this) {
-      case _ChartPeriod.day:
-        return l10n.text('periodDay');
-      case _ChartPeriod.week:
-        return l10n.text('periodWeek');
-      case _ChartPeriod.month:
-        return l10n.text('periodMonth');
-      case _ChartPeriod.year:
-        return l10n.text('periodYear');
-    }
-  }
-}
-
+/// Full-page dashboard used as a bottom-nav tab.
 class DashboardSection extends StatefulWidget {
-  const DashboardSection({super.key});
+  const DashboardSection({super.key, this.isActive = true});
+
+  final bool isActive;
 
   @override
   State<DashboardSection> createState() => _DashboardSectionState();
@@ -56,593 +56,847 @@ class _DashboardSectionState extends State<DashboardSection> {
   SariColors get sari => context.sari;
   ColorScheme get scheme => Theme.of(context).colorScheme;
 
-  _ChartPeriod _period = _ChartPeriod.week;
+  late final Query<Map<String, dynamic>>? _ordersQuery;
+  late final Stream<QuerySnapshot<Map<String, dynamic>>>? _ordersStream;
+
+  @override
+  void initState() {
+    super.initState();
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    if (userId == null || userId.isEmpty) {
+      _ordersQuery = null;
+      _ordersStream = null;
+      return;
+    }
+
+    final now = _manilaNow();
+    final yearStartUtc =
+        DateTime.utc(now.year).subtract(const Duration(hours: 8));
+    final nextYearStartUtc = DateTime.utc(now.year + 1)
+        .subtract(const Duration(hours: 8));
+    _ordersQuery = FirebaseFirestore.instance
+        .collection(FirebaseService.ordersPath)
+        .where('userId', isEqualTo: userId)
+        .where(
+          'createdAt',
+          isGreaterThanOrEqualTo: Timestamp.fromDate(yearStartUtc),
+        )
+        .where(
+          'createdAt',
+          isLessThan: Timestamp.fromDate(nextYearStartUtc),
+        )
+        .orderBy('createdAt', descending: true);
+    _ordersStream = _ordersQuery!.snapshots(includeMetadataChanges: true);
+  }
+
+  Future<void> _refreshFromServer() async {
+    final query = _ordersQuery;
+    if (query == null) return;
+    try {
+      await query.get(const GetOptions(source: Source.server));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  DateTime? _manilaTime(DateTime? date) =>
+      date?.toUtc().add(const Duration(hours: 8));
+
+  DateTime _manilaNow() => DateTime.now().toUtc().add(const Duration(hours: 8));
 
   @override
   Widget build(BuildContext context) {
-    final firebase = FirebaseService();
     final settings = SettingsStore.instance;
-    final userId = FirebaseAuth.instance.currentUser?.uid;
     final l10n = context.l10n;
     final locale = Localizations.localeOf(context).languageCode;
+    final theme = Theme.of(context);
 
-    return ListenableBuilder(
-      listenable: settings,
-      builder: (context, _) {
-        return StreamBuilder<QuerySnapshot>(
-          stream: userId == null
-              ? const Stream.empty()
-              : firebase.getOrdersStream(userId: userId, limit: 200),
-          builder: (context, orderSnapshot) {
+    return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
+      body: SafeArea(
+        bottom: false,
+        child: ListenableBuilder(
+          listenable: settings,
+          builder: (context, _) {
             return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: userId == null
-                  ? const Stream.empty()
-                  : firebase.getCreditsStream(userId),
-              builder: (context, creditSnapshot) {
-                if (orderSnapshot.connectionState == ConnectionState.waiting &&
-                    !orderSnapshot.hasData) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 28),
-                    child: Center(
-                      child: CircularProgressIndicator(color: scheme.primary),
+              stream: widget.isActive ? _ordersStream : null,
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return RefreshIndicator(
+                    color: scheme.primary,
+                    onRefresh: _refreshFromServer,
+                    child: ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.all(20),
+                      children: [
+                        const SizedBox(height: 80),
+                        _panel(
+                          child: Text(
+                            l10n.text(
+                              'couldNotLoadDashboard',
+                              values: {'error': '${snapshot.error}'},
+                            ),
+                            style: GoogleFonts.outfit(
+                              color: sari.danger,
+                              fontSize: 12,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ],
                     ),
                   );
                 }
 
-                if (orderSnapshot.hasError) {
-                  return _messageCard(
-                    'Could not load dashboard: ${orderSnapshot.error}',
-                    color: sari.danger,
+                if (!snapshot.hasData) {
+                  return ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      SizedBox(
+                        height: MediaQuery.sizeOf(context).height * 0.5,
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            color: scheme.primary,
+                          ),
+                        ),
+                      ),
+                    ],
                   );
                 }
 
-                final orders = (orderSnapshot.data?.docs
+                final now = _manilaNow();
+                final orders =
+                    snapshot.data!.docs
                         .map(
-                          (doc) => StoreOrder.fromFirestore(
-                            doc.id,
-                            doc.data() as Map<String, dynamic>,
-                          ),
+                          (doc) => StoreOrder.fromFirestore(doc.id, doc.data()),
                         )
-                        .toList() ??
-                    <StoreOrder>[])
-                  ..sort((a, b) {
-                    final aTime =
-                        a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-                    final bTime =
-                        b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-                    return bTime.compareTo(aTime);
-                  });
-                final metrics = DashboardMetrics.fromOrders(
-                  orders: orders,
-                  taxRate: settings.taxRate,
-                );
-                final creditBalance = creditSnapshot.hasError
-                    ? null
-                    : DashboardMetrics.unpaidCredit(
-                        creditSnapshot.data?.docs
-                                .map((doc) => doc.data())
-                                .toList() ??
-                            const <Map<String, dynamic>>[],
+                        .where((order) {
+                          final createdAt = _manilaTime(order.createdAt);
+                          return createdAt != null &&
+                              createdAt.year == now.year;
+                        })
+                        .toList()
+                      ..sort(
+                        (a, b) =>
+                            (_manilaTime(b.createdAt) ?? DateTime.utc(1970))
+                                .compareTo(
+                                  _manilaTime(a.createdAt) ??
+                                      DateTime.utc(1970),
+                                ),
                       );
-
-                final chart = _chartFor(
-                  _period,
-                  orders,
-                  metrics,
-                  l10n,
-                  locale,
+                unawaited(
+                  NotificationStore.instance.updateOrders(
+                    orders,
+                    isFromCache: snapshot.data!.metadata.isFromCache,
+                  ),
                 );
-                final periodTotal =
-                    chart.values.fold<double>(0, (sum, v) => sum + v);
+                final isSyncing =
+                    snapshot.data!.metadata.isFromCache ||
+                    snapshot.data!.metadata.hasPendingWrites;
 
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 18),
-                    _Reveal(
-                      child: _sectionLabel(l10n.text('dashboard')),
-                    ),
-
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        final cardWidth = (constraints.maxWidth - 10) / 2;
-                        return Wrap(
-                          spacing: 10,
-                          runSpacing: 10,
-                          children: [
-                            _Reveal(
-                              delay: const Duration(milliseconds: 60),
-                              child: SizedBox(
-                                width: cardWidth,
-                                height: 108,
-                                child: _CountUp(
-                                  value: metrics.salesToday.toDouble(),
-                                  builder: (context, v) => StatCard(
-                                    label: l10n.text('salesToday'),
-                                    value: settings.formatMoney(v),
-                                    icon: Icons.payments_outlined,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            _Reveal(
-                              delay: const Duration(milliseconds: 130),
-                              child: SizedBox(
-                                width: cardWidth,
-                                height: 108,
-                                child: _CountUp(
-                                  value: metrics.afterTaxToday.toDouble(),
-                                  builder: (context, v) => StatCard(
-                                    label: l10n.text('afterTaxToday'),
-                                    value: settings.formatMoney(v),
-                                    valueColor: sari.success,
-                                    icon:
-                                        Icons.account_balance_wallet_outlined,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            _Reveal(
-                              delay: const Duration(milliseconds: 200),
-                              child: SizedBox(
-                                width: cardWidth,
-                                height: 108,
-                                child: _CountUp(
-                                  value: metrics.transactionsToday.toDouble(),
-                                  builder: (context, v) => StatCard(
-                                    label: l10n.text('transactions'),
-                                    value: '${v.round()}',
-                                    icon: Icons.receipt_long_outlined,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            _Reveal(
-                              delay: const Duration(milliseconds: 270),
-                              child: SizedBox(
-                                width: cardWidth,
-                                height: 108,
-                                child: creditBalance == null
-                                    ? StatCard(
-                                        label: l10n.text('creditBalance'),
-                                        value: l10n.text('unavailable'),
-                                        valueColor: sari.danger,
-                                        icon: Icons.credit_card_outlined,
-                                      )
-                                    : _CountUp(
-                                        value: creditBalance.toDouble(),
-                                        builder: (context, v) => StatCard(
-                                          label: l10n.text('creditBalance'),
-                                          value: settings.formatMoney(v),
-                                          icon: Icons.credit_card_outlined,
-                                        ),
-                                      ),
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 24),
-
-                    _Reveal(
-                      delay: const Duration(milliseconds: 340),
-                      child: Padding(
-                        padding: const EdgeInsets.only(
-                            left: 4, bottom: 12, right: 4),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Container(
-                              width: 4,
-                              height: 34,
-                              decoration: BoxDecoration(
-                                color: scheme.primary,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    _period.label(l10n),
-                                    style: GoogleFonts.outfit(
-                                      color: scheme.onSurface,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  _CountUp(
-                                    value: periodTotal,
-                                    builder: (context, v) => Text(
-                                      settings.formatMoney(v),
-                                      style: GoogleFonts.outfit(
-                                        color: sari.accentAmber,
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            _periodPicker(),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    _Reveal(
-                      delay: const Duration(milliseconds: 400),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.fromLTRB(14, 22, 14, 10),
-                        decoration: BoxDecoration(
-                          color: sari.cardSurface,
-                          borderRadius: BorderRadius.circular(22),
-                          border: Border.all(color: sari.cardBorder),
-                          boxShadow: [
-                            BoxShadow(
-                              color: sari.shadow,
-                              blurRadius: 12,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: SizedBox(
-                          height: 200,
-                          child: Stack(
-                            children: [
-                              TweenAnimationBuilder<double>(
-                                key: ValueKey(_period),
-                                tween: Tween(begin: 0.0, end: 1.0),
-                                duration: const Duration(milliseconds: 900),
-                                curve: Curves.easeOutCubic,
-                                builder: (context, progress, _) {
-                                  return BarChart(
-                                    chart.dataFor(sari, scheme, progress),
-                                    swapAnimationDuration:
-                                        const Duration(milliseconds: 350),
-                                  );
-                                },
-                              ),
-                              if (!chart.hasValues)
-                                IgnorePointer(
-                                  child: Center(
-                                    child: DecoratedBox(
-                                      decoration: BoxDecoration(
-                                        color: sari.fieldFill,
-                                        borderRadius: const BorderRadius.all(
-                                          Radius.circular(18),
-                                        ),
-                                        border: Border.all(
-                                            color: sari.cardBorder),
-                                      ),
-                                      child: Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 14,
-                                          vertical: 9,
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(
-                                              Icons.bar_chart_rounded,
-                                              color: sari.faintText,
-                                              size: 16,
-                                            ),
-                                            const SizedBox(width: 6),
-                                            Text(
-                                              l10n.text('noSalesInPeriod'),
-                                              style: GoogleFonts.outfit(
-                                                color: sari.mutedText,
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-
-                    _Reveal(
-                      delay: const Duration(milliseconds: 460),
-                      child: Padding(
-                        padding: const EdgeInsets.only(left: 4, bottom: 12),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 4,
-                              height: 16,
-                              decoration: BoxDecoration(
-                                color: sari.accentAmber,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Text(
-                              l10n.text('topSellingRecent'),
-                              style: GoogleFonts.outfit(
-                                color: scheme.onSurface,
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    if (metrics.topSellers.isEmpty)
-                      _Reveal(
-                        delay: const Duration(milliseconds: 520),
-                        child: _panel(
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.inventory_2_outlined,
-                                  color: sari.faintText, size: 20),
-                              const SizedBox(width: 10),
-                              Text(
-                                l10n.text('noSalesYet'),
-                                style: GoogleFonts.outfit(
-                                  color: sari.mutedText,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      )
-                    else
-                      _panel(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Column(
-                          children: [
-                            for (var index = 0;
-                                index < metrics.topSellers.length;
-                                index++) ...[
-                              _Reveal(
-                                delay:
-                                    Duration(milliseconds: 520 + index * 90),
-                                child: _sellerRow(
-                                  metrics.topSellers[index],
-                                  index + 1,
-                                  metrics.topSellers.first.quantity
-                                      .toDouble(),
-                                ),
-                              ),
-                              if (index < metrics.topSellers.length - 1)
-                                Divider(
-                                  height: 1,
-                                  color: sari.cardBorder,
-                                ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    const SizedBox(height: 8),
-                  ],
+                return RefreshIndicator(
+                  color: scheme.primary,
+                  onRefresh: _refreshFromServer,
+                  child: _buildBody(
+                    settings,
+                    l10n,
+                    locale,
+                    orders,
+                    now,
+                    isSyncing,
+                  ),
                 );
               },
             );
           },
-        );
-      },
-    );
-  }
-
-  Widget _sectionLabel(String text) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 4, bottom: 10),
-      child: Text(
-        text,
-        style: GoogleFonts.outfit(
-          color: sari.faintText,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.8,
         ),
       ),
     );
   }
 
-  Widget _periodPicker() {
-    final l10n = context.l10n;
-    return PopupMenuButton<_ChartPeriod>(
-      initialValue: _period,
-      onSelected: (value) => setState(() => _period = value),
-      color: sari.cardSurface,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: sari.cardBorder),
-      ),
-      itemBuilder: (context) => _ChartPeriod.values
-          .map(
-            (period) => PopupMenuItem(
-              value: period,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    period.pickerLabel(l10n),
-                    style: GoogleFonts.outfit(color: scheme.onSurface),
-                  ),
-                  if (period == _period)
-                    Icon(Icons.check_rounded, color: sari.accentAmber, size: 18),
-                ],
-              ),
-            ),
-          )
-          .toList(),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: sari.fieldFill,
-          border: Border.all(
-            color: sari.cardBorder,
-          ),
-          borderRadius: BorderRadius.circular(30),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              _period.pickerLabel(l10n),
-              style: GoogleFonts.outfit(
-                color: scheme.onSurface,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(width: 4),
-            Icon(Icons.expand_more_rounded, color: sari.mutedText, size: 18),
-          ],
-        ),
-      ),
-    );
-  }
-
-  static _ChartResult _chartFor(
-    _ChartPeriod period,
-    List<StoreOrder> orders,
-    DashboardMetrics metrics,
+  Widget _buildBody(
+    SettingsStore settings,
     AppLocalizations l10n,
     String locale,
-  ) {
-    switch (period) {
-      case _ChartPeriod.day:
-        return _buildDayChart(orders, locale);
-      case _ChartPeriod.week:
-        return _buildWeekChart(orders, locale);
-      case _ChartPeriod.month:
-        return _buildMonthChart(orders, locale, l10n);
-      case _ChartPeriod.year:
-        return _buildYearChart(orders, locale);
-    }
-  }
-
-  static _ChartResult _buildDayChart(
     List<StoreOrder> orders,
-    String locale,
+    DateTime now,
+    bool isSyncing,
   ) {
-    final now = DateTime.now();
-    final values = List<double>.filled(8, 0);
-    for (final order in orders) {
-      final createdAt = order.createdAt;
-      if (createdAt == null ||
-          createdAt.year != now.year ||
-          createdAt.month != now.month ||
-          createdAt.day != now.day) {
+    final day30 = DateTime.utc(
+      now.year,
+      now.month,
+      now.day,
+    ).subtract(const Duration(days: 29));
+    final metrics = DashboardMetrics.fromOrders(
+      orders: orders,
+      taxRate: settings.taxRate,
+      now: now,
+    );
+
+    var revenue30 = 0.0;
+    var tx30 = 0;
+    for (final o in orders) {
+      final when = _manilaTime(o.createdAt);
+      if (when == null || when.isBefore(day30)) continue;
+      revenue30 += o.total;
+      tx30++;
+    }
+    final profit30 = revenue30 * 0.20;
+    const profitMargin = 20.0;
+    final avgSale = tx30 > 0 ? revenue30 / tx30 : 0.0;
+
+    final yearRevenue = List<double>.filled(12, 0);
+    final yearProfit = List<double>.filled(12, 0);
+    for (final o in orders) {
+      final when = _manilaTime(o.createdAt);
+      if (when == null || when.year != now.year) continue;
+      yearRevenue[when.month - 1] += o.total;
+      yearProfit[when.month - 1] += o.total * 0.20;
+    }
+
+    final categoryTotals = <String, double>{};
+    for (final o in orders) {
+      for (final item in o.items) {
+        final cat = _normalizeCategory((item['category'] ?? '').toString());
+        final qty = (item['quantity'] as num?)?.toDouble() ?? 0;
+        final price = (item['price'] as num?)?.toDouble() ?? 0;
+        final sub = (item['subtotal'] as num?)?.toDouble() ?? (price * qty);
+        categoryTotals[cat] = (categoryTotals[cat] ?? 0) + sub;
+      }
+    }
+    final categoryEntries = categoryTotals.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final categorySum = categoryEntries.fold<double>(0, (s, e) => s + e.value);
+
+    final monthSoldQty = <String, int>{};
+    final monthSoldRev = <String, double>{};
+    for (final o in orders) {
+      final when = _manilaTime(o.createdAt);
+      if (when == null || when.year != now.year || when.month != now.month) {
         continue;
       }
-      values[createdAt.hour ~/ 3] += order.total;
+      for (final item in o.items) {
+        final name = (item['name'] ?? 'Item').toString();
+        final qty = (item['quantity'] as num?)?.toInt() ?? 0;
+        final price = (item['price'] as num?)?.toDouble() ?? 0;
+        final sub = (item['subtotal'] as num?)?.toDouble() ?? (price * qty);
+        monthSoldQty[name] = (monthSoldQty[name] ?? 0) + qty;
+        monthSoldRev[name] = (monthSoldRev[name] ?? 0) + sub;
+      }
     }
-    final labels = List<String>.generate(
-      8,
-      (index) => DateFormat('ha', locale).format(
-        DateTime(now.year, now.month, now.day, index * 3),
-      ),
-    );
-    return _ChartResult(
-      values: values,
-      labels: labels,
-      hasValues: values.any((value) => value > 0),
-      currentIndex: now.hour ~/ 3,
-    );
-  }
+    final topProducts = monthSoldQty.entries.toList()
+      ..sort((a, b) {
+        final q = b.value.compareTo(a.value);
+        if (q != 0) return q;
+        return (monthSoldRev[b.key] ?? 0).compareTo(monthSoldRev[a.key] ?? 0);
+      });
+    final top5 = topProducts.take(5).toList();
 
-  static _ChartResult _buildWeekChart(List<StoreOrder> orders, String locale) {
-    final now = DateTime.now();
-    final monday = DateTime(now.year, now.month, now.day)
-        .subtract(Duration(days: now.weekday - 1));
-    final values = List<double>.filled(7, 0);
-    for (final order in orders) {
-      final createdAt = order.createdAt;
-      if (createdAt == null) continue;
-      final day = DateTime(createdAt.year, createdAt.month, createdAt.day);
-      final index = day.difference(monday).inDays;
-      if (index >= 0 && index < values.length) values[index] += order.total;
+    var cashTotal = 0.0;
+    var creditTotal = 0.0;
+    for (final o in orders) {
+      final method = o.paymentMethod.toLowerCase();
+      if (method.contains('credit') || method.contains('utang')) {
+        creditTotal += o.total;
+      } else {
+        cashTotal += o.total;
+      }
     }
-    return _ChartResult(
-      values: values,
-      labels: List<String>.generate(
-        7,
-        (index) =>
-            DateFormat('E', locale).format(monday.add(Duration(days: index))),
-      ),
-      hasValues: values.any((value) => value > 0),
-      currentIndex: now.weekday - 1,
-    );
-  }
+    final paySum = cashTotal + creditTotal;
+    final cashPct = paySum > 0 ? (cashTotal / paySum) * 100 : 0.0;
+    final creditPct = paySum > 0 ? (creditTotal / paySum) * 100 : 0.0;
 
-  static _ChartResult _buildMonthChart(
-    List<StoreOrder> orders,
-    String locale,
-    AppLocalizations l10n,
-  ) {
-    final now = DateTime.now();
-    final values = List<double>.filled(5, 0);
-    for (final order in orders) {
-      final createdAt = order.createdAt;
-      if (createdAt == null) continue;
-      if (createdAt.year != now.year || createdAt.month != now.month) continue;
-      final weekIndex = ((createdAt.day - 1) ~/ 7).clamp(0, 4);
-      values[weekIndex] += order.total;
-    }
-    final labels = List<String>.generate(
-      5,
-      (i) => l10n.text('chartWeekAbbr', values: {'week': '${i + 1}'}),
-    );
-    return _ChartResult(
-      values: values,
-      labels: labels,
-      hasValues: values.any((v) => v > 0),
-      currentIndex: ((now.day - 1) ~/ 7).clamp(0, 4),
-    );
-  }
-
-  static _ChartResult _buildYearChart(List<StoreOrder> orders, String locale) {
-    final now = DateTime.now();
-    final values = List<double>.filled(12, 0);
-    for (final order in orders) {
-      final createdAt = order.createdAt;
-      if (createdAt == null) continue;
-      if (createdAt.year != now.year) continue;
-      values[createdAt.month - 1] += order.total;
-    }
-    final labels = List<String>.generate(
+    final monthLabels = List<String>.generate(
       12,
       (i) => DateFormat('MMM', locale).format(DateTime(now.year, i + 1)),
     );
-    return _ChartResult(
-      values: values,
-      labels: labels,
-      hasValues: values.any((v) => v > 0),
-      currentIndex: now.month - 1,
+
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(
+        parent: BouncingScrollPhysics(),
+      ),
+      padding: EdgeInsets.fromLTRB(
+        20,
+        6,
+        20,
+        AppBottomNav.bodyBottomInset(context),
+      ),
+      children: [
+        AppPageHeader(
+          leading: AppPageHeader.iconBadge(
+            context: context,
+            icon: Icons.bar_chart_rounded,
+          ),
+          title: l10n.text('dashboard'),
+          subtitle: DateFormat('EEEE, MMM d', locale).format(now),
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: Text(
+            isSyncing ? 'Syncing...' : 'Synced',
+            style: GoogleFonts.outfit(
+              color: sari.faintText,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+
+        // Compact Sales Today + Transactions Today
+        Row(
+          children: [
+            Expanded(
+              child: _compactStat(
+                label: l10n.text('salesToday'),
+                value: settings.formatMoney(metrics.salesToday),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _compactStat(
+                label: 'Transactions Today',
+                value: '${metrics.transactionsToday}',
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+
+        // KPI 2x2
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final w = (constraints.maxWidth - 10) / 2;
+            return Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                SizedBox(
+                  width: w,
+                  child: _kpiCard(
+                    title: 'Total Revenue (30D)',
+                    value: settings.formatMoney(revenue30),
+                    subtitle: '$tx30 total transactions',
+                  ),
+                ),
+                SizedBox(
+                  width: w,
+                  child: _kpiCard(
+                    title: 'Total Profit (30D)',
+                    value: settings.formatMoney(profit30),
+                    subtitle: 'Estimated (20%)',
+                    valueColor: sari.accentAmber,
+                  ),
+                ),
+                SizedBox(
+                  width: w,
+                  child: _kpiCard(
+                    title: 'Profit Margin',
+                    value: '${profitMargin.toStringAsFixed(0)}%',
+                    subtitle: 'Standard estimate',
+                  ),
+                ),
+                SizedBox(
+                  width: w,
+                  child: _kpiCard(
+                    title: 'Avg. Sale Value',
+                    value: settings.formatMoney(avgSale),
+                    subtitle: 'Per transaction',
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 22),
+
+        // Revenue & Profit Trend
+        Text(
+          'Revenue & Profit Trend (current year)',
+          style: GoogleFonts.outfit(
+            color: scheme.onSurface,
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 10),
+        _panel(
+          padding: const EdgeInsets.fromLTRB(8, 14, 12, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 0, 4, 0),
+                child: Row(
+                  children: [
+                    _legendDot(scheme.primary, 'Revenue'),
+                    const SizedBox(width: 14),
+                    _legendDot(sari.accentAmber, 'Profit', dashed: true),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              SizedBox(
+                height: 220,
+                width: double.infinity,
+                child: _yearTrendChart(
+                  revenue: yearRevenue,
+                  profit: yearProfit,
+                  labels: monthLabels,
+                  settings: settings,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 22),
+
+        // Sales by Category
+        Text(
+          'Sales by Category',
+          style: GoogleFonts.outfit(
+            color: scheme.onSurface,
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 10),
+        _panel(
+          child: categorySum <= 0
+              ? Text(
+                  'No sales yet',
+                  style: GoogleFonts.outfit(
+                    color: sari.mutedText,
+                    fontSize: 13,
+                  ),
+                  textAlign: TextAlign.center,
+                )
+              : Column(
+                  children: [
+                    SizedBox(
+                      height: 180,
+                      child: PieChart(
+                        PieChartData(
+                          sectionsSpace: 2,
+                          centerSpaceRadius: 42,
+                          sections: [
+                            for (var i = 0; i < categoryEntries.length; i++)
+                              PieChartSectionData(
+                                color:
+                                    _kCategoryColors[i %
+                                        _kCategoryColors.length],
+                                value: categoryEntries[i].value,
+                                title: '',
+                                radius: 34,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    for (var i = 0; i < categoryEntries.length; i++)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                color:
+                                    _kCategoryColors[i %
+                                        _kCategoryColors.length],
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                l10n.category(categoryEntries[i].key),
+                                style: GoogleFonts.outfit(
+                                  color: scheme.onSurface,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              '${((categoryEntries[i].value / categorySum) * 100).toStringAsFixed(0)}%',
+                              style: GoogleFonts.outfit(
+                                color: sari.mutedText,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+        ),
+        const SizedBox(height: 22),
+
+        // Top Products This Month
+        Text(
+          'Top Products This Month',
+          style: GoogleFonts.outfit(
+            color: scheme.onSurface,
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 10),
+        _panel(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: top5.isEmpty
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.inventory_2_outlined,
+                      color: sari.faintText,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'No sales yet - complete a checkout to see top products',
+                        softWrap: true,
+                        style: GoogleFonts.outfit(
+                          color: sari.mutedText,
+                          fontSize: 13,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              : Column(
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 5,
+                          child: Text(
+                            'Product',
+                            style: GoogleFonts.outfit(
+                              color: sari.mutedText,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Text(
+                            'Units',
+                            textAlign: TextAlign.right,
+                            style: GoogleFonts.outfit(
+                              color: sari.mutedText,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 3,
+                          child: Text(
+                            'Revenue',
+                            textAlign: TextAlign.right,
+                            style: GoogleFonts.outfit(
+                              color: sari.mutedText,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    for (var i = 0; i < top5.length; i++) ...[
+                      if (i > 0) Divider(height: 14, color: sari.cardBorder),
+                      Row(
+                        children: [
+                          Expanded(
+                            flex: 5,
+                            child: Text(
+                              top5[i].key,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              softWrap: true,
+                              style: GoogleFonts.outfit(
+                                color: scheme.onSurface,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            flex: 2,
+                            child: Text(
+                              '${top5[i].value}',
+                              textAlign: TextAlign.right,
+                              style: GoogleFonts.outfit(
+                                color: scheme.onSurface,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            flex: 3,
+                            child: Text(
+                              settings.formatMoney(
+                                monthSoldRev[top5[i].key] ?? 0,
+                              ),
+                              textAlign: TextAlign.right,
+                              style: GoogleFonts.outfit(
+                                color: sari.accentAmber,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+        ),
+        const SizedBox(height: 22),
+
+        // Payment Method Mix
+        Text(
+          'Payment Method Mix',
+          style: GoogleFonts.outfit(
+            color: scheme.onSurface,
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 10),
+        _panel(
+          child: Column(
+            children: [
+              _payRow(color: scheme.primary, label: 'Cash', percent: cashPct),
+              const SizedBox(height: 12),
+              _payRow(
+                color: sari.accentAmber,
+                label: 'Credit',
+                percent: creditPct,
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _messageCard(String message, {required Color color}) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 22),
-      child: _panel(
-        child: Text(
-          message,
-          style: GoogleFonts.outfit(color: color, fontSize: 12),
-          textAlign: TextAlign.center,
-        ),
+  static String _normalizeCategory(String raw) {
+    final n = raw.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+    if (n.isEmpty) return 'Other';
+    if (n == 'beverage' || n == 'beverages') return 'Beverages';
+    if (n.startsWith('coffee') || n.contains('tea')) return 'Coffee & Tea';
+    if (n.contains('snack')) return 'Snacks';
+    if (n.contains('noodle')) return 'Noodles';
+    if (n.startsWith('cann')) return 'Canned Goods';
+    if (n.contains('condiment') || n.contains('sauce')) return 'Condiments';
+    if (n.contains('personal')) return 'Personal Care';
+    if (n.contains('household') || n.contains('cleaning')) return 'Household';
+    for (final known in _kWebCategories) {
+      if (known.toLowerCase() == n) return known;
+    }
+    return 'Other';
+  }
+
+  Widget _compactStat({required String label, required String value}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: sari.cardSurface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: sari.cardBorder),
       ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.outfit(
+              color: sari.mutedText,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 4),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              value,
+              maxLines: 1,
+              softWrap: false,
+              style: GoogleFonts.outfit(
+                color: scheme.onSurface,
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _kpiCard({
+    required String title,
+    required String value,
+    required String subtitle,
+    Color? valueColor,
+  }) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+      decoration: BoxDecoration(
+        color: sari.cardSurface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: sari.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.outfit(
+              color: sari.mutedText,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              height: 1.25,
+            ),
+          ),
+          const SizedBox(height: 8),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              value,
+              maxLines: 1,
+              softWrap: false,
+              style: GoogleFonts.outfit(
+                color: valueColor ?? scheme.onSurface,
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.outfit(
+              color: sari.faintText,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Nice top of Y-axis for ~4 evenly spaced labels.
+  double _niceChartMax(double maxVal) {
+    if (maxVal <= 0) return 10;
+    final padded = maxVal * 1.1;
+    final exp = (math.log(padded) / math.ln10).floor();
+    final base = math.pow(10, exp).toDouble();
+    final fraction = padded / base;
+    final double niceFraction;
+    if (fraction <= 1) {
+      niceFraction = 1;
+    } else if (fraction <= 2) {
+      niceFraction = 2;
+    } else if (fraction <= 5) {
+      niceFraction = 5;
+    } else {
+      niceFraction = 10;
+    }
+    return niceFraction * base;
+  }
+
+  Widget _legendDot(Color color, String label, {bool dashed = false}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (dashed)
+          SizedBox(
+            width: 16,
+            child: CustomPaint(
+              painter: _DashLinePainter(color),
+              size: const Size(16, 2),
+            ),
+          )
+        else
+          Container(
+            width: 16,
+            height: 3,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: GoogleFonts.outfit(
+            color: sari.mutedText,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _payRow({
+    required Color color,
+    required String label,
+    required double percent,
+  }) {
+    return Row(
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            label,
+            style: GoogleFonts.outfit(
+              color: scheme.onSurface,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        Text(
+          '${percent.toStringAsFixed(0)}%',
+          style: GoogleFonts.outfit(
+            color: sari.mutedText,
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
     );
   }
 
@@ -662,288 +916,229 @@ class _DashboardSectionState extends State<DashboardSection> {
     );
   }
 
-  Widget _sellerRow(DashboardSeller seller, int rank, double topQuantity) {
-    final badgeColor = switch (rank) {
-      1 => const Color(0xFFFFC145),
-      2 => const Color(0xFFB8C2CC),
-      _ => const Color(0xFFD08C5B),
-    };
-    final ratio =
-        topQuantity <= 0 ? 0.0 : (seller.quantity.toDouble() / topQuantity);
+  Widget _yearTrendChart({
+    required List<double> revenue,
+    required List<double> profit,
+    required List<String> labels,
+    required SettingsStore settings,
+  }) {
+    final maxVal = [
+      ...revenue,
+      ...profit,
+    ].fold<double>(0, (m, v) => v > m ? v : m);
+    final chartMax = _niceChartMax(maxVal);
+    final interval = chartMax / 4;
+    final hasData = maxVal > 0;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 32,
-                height: 32,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: badgeColor.withValues(alpha: 0.18),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: badgeColor, width: 1.5),
+    final revenueSpots = List<FlSpot>.generate(
+      12,
+      (i) => FlSpot(i.toDouble(), revenue[i].clamp(0, double.infinity)),
+    );
+    final profitSpots = List<FlSpot>.generate(
+      12,
+      (i) => FlSpot(i.toDouble(), profit[i].clamp(0, double.infinity)),
+    );
+
+    return Stack(
+      children: [
+        LineChart(
+          LineChartData(
+            minX: 0,
+            maxX: 11,
+            minY: 0,
+            maxY: chartMax,
+            clipData: const FlClipData.all(),
+            gridData: FlGridData(
+              show: true,
+              drawVerticalLine: false,
+              horizontalInterval: interval,
+              getDrawingHorizontalLine: (value) => FlLine(
+                color: scheme.onSurface.withValues(alpha: 0.06),
+                strokeWidth: 1,
+              ),
+            ),
+            borderData: FlBorderData(show: false),
+            lineTouchData: LineTouchData(
+              enabled: hasData,
+              touchTooltipData: LineTouchTooltipData(
+                getTooltipColor: (_) => sari.cardSurface,
+                getTooltipItems: (touched) {
+                  return touched.map((spot) {
+                    final i = spot.x.toInt();
+                    if (i < 0 || i >= labels.length) return null;
+                    final isProfit = spot.barIndex == 1;
+                    return LineTooltipItem(
+                      '${labels[i]} ${isProfit ? 'Profit' : 'Revenue'}\n'
+                      '${settings.formatMoney(spot.y)}',
+                      GoogleFonts.outfit(
+                        color: scheme.onSurface,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 11,
+                      ),
+                    );
+                  }).toList();
+                },
+              ),
+            ),
+            titlesData: FlTitlesData(
+              topTitles: const AxisTitles(
+                sideTitles: SideTitles(showTitles: false),
+              ),
+              rightTitles: const AxisTitles(
+                sideTitles: SideTitles(showTitles: false),
+              ),
+              leftTitles: AxisTitles(
+                sideTitles: SideTitles(
+                  showTitles: true,
+                  reservedSize: 52,
+                  interval: interval,
+                  getTitlesWidget: (value, meta) {
+                    // Skip edge duplicates / floating-point noise.
+                    if (value < -0.001 || value > chartMax + 0.001) {
+                      return const SizedBox.shrink();
+                    }
+                    final nearZero = value.abs() < interval * 0.05;
+                    final nearMax = (value - chartMax).abs() < interval * 0.05;
+                    if (!nearZero &&
+                        !nearMax &&
+                        (value / interval - (value / interval).round()).abs() >
+                            0.05) {
+                      return const SizedBox.shrink();
+                    }
+                    final compact = settings.formatMoneyCompact(value);
+                    return SideTitleWidget(
+                      axisSide: meta.axisSide,
+                      space: 6,
+                      child: SizedBox(
+                        width: 46,
+                        child: Text(
+                          compact,
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.right,
+                          style: GoogleFonts.outfit(
+                            color: sari.faintText,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
+                            height: 1,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
-                child: Text(
-                  '$rank',
-                  style: GoogleFonts.outfit(
-                    color: badgeColor,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
+              ),
+              bottomTitles: AxisTitles(
+                sideTitles: SideTitles(
+                  showTitles: true,
+                  interval: 1,
+                  reservedSize: 26,
+                  getTitlesWidget: (value, meta) {
+                    final i = value.toInt();
+                    if (i < 0 || i >= labels.length || i % 2 != 0) {
+                      return const SizedBox.shrink();
+                    }
+                    return SideTitleWidget(
+                      axisSide: meta.axisSide,
+                      space: 6,
+                      child: Text(
+                        labels[i],
+                        style: GoogleFonts.outfit(
+                          color: sari.faintText,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+            lineBarsData: [
+              LineChartBarData(
+                spots: revenueSpots,
+                isCurved: true,
+                curveSmoothness: 0.28,
+                preventCurveOverShooting: true,
+                preventCurveOvershootingThreshold: 4.0,
+                color: scheme.primary,
+                barWidth: 3,
+                isStrokeCapRound: true,
+                dotData: const FlDotData(show: false),
+                belowBarData: BarAreaData(
+                  show: true,
+                  cutOffY: 0,
+                  applyCutOffY: true,
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      scheme.primary.withValues(alpha: 0.28),
+                      scheme.primary.withValues(alpha: 0.02),
+                    ],
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
-              Container(
-                padding: const EdgeInsets.all(7),
-                decoration: BoxDecoration(
-                  color: sari.accentAmber.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(9),
-                ),
-                child: Icon(
-                  Icons.shopping_bag_outlined,
-                  color: sari.accentAmber,
-                  size: 17,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  seller.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.outfit(
-                    color: scheme.onSurface,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                context.l10n.text(
-                  'bestSellingPcs',
-                  values: {'count': '${seller.quantity}'},
-                ),
-                style: GoogleFonts.outfit(
-                  color: sari.accentAmber,
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                ),
+              LineChartBarData(
+                spots: profitSpots,
+                isCurved: true,
+                curveSmoothness: 0.28,
+                preventCurveOverShooting: true,
+                preventCurveOvershootingThreshold: 4.0,
+                color: sari.accentAmber,
+                barWidth: 2.5,
+                isStrokeCapRound: true,
+                dashArray: const [6, 4],
+                dotData: const FlDotData(show: false),
+                belowBarData: BarAreaData(show: false),
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0, end: ratio.clamp(0.0, 1.0)),
-              duration: const Duration(milliseconds: 900),
-              curve: Curves.easeOutCubic,
-              builder: (context, v, _) => LinearProgressIndicator(
-                value: v,
-                minHeight: 5,
-                backgroundColor: scheme.onSurface.withValues(alpha: 0.07),
-                valueColor: AlwaysStoppedAnimation(
-                  scheme.primary.withValues(alpha: 0.85),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ChartResult {
-  const _ChartResult({
-    required this.values,
-    required this.labels,
-    required this.hasValues,
-    required this.currentIndex,
-  });
-
-  final List<double> values;
-  final List<String> labels;
-  final bool hasValues;
-  final int currentIndex;
-
-  BarChartData dataFor(
-    SariColors sari,
-    ColorScheme scheme,
-    double progress,
-  ) {
-    final highestValue = values.fold<double>(
-      0,
-      (current, value) => value > current ? value : current,
-    );
-    final chartMax = highestValue <= 0 ? 10.0 : highestValue * 1.2;
-
-    return BarChartData(
-      maxY: chartMax,
-      alignment: BarChartAlignment.spaceAround,
-      gridData: const FlGridData(show: false),
-      borderData: FlBorderData(show: false),
-      barTouchData: BarTouchData(
-        touchTooltipData: BarTouchTooltipData(
-          getTooltipColor: (_) => sari.cardSurface,
-          getTooltipItem: (group, groupIndex, rod, rodIndex) {
-            final index = group.x.toInt();
-            if (index < 0 || index >= labels.length) return null;
-            return BarTooltipItem(
-              '${labels[index]}\n',
-              GoogleFonts.outfit(
-                color: scheme.onSurface,
+          duration: const Duration(milliseconds: 450),
+        ),
+        if (!hasData)
+          Center(
+            child: Text(
+              'No sales yet',
+              style: GoogleFonts.outfit(
+                color: sari.mutedText,
+                fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
-              children: [
-                TextSpan(
-                  text: SettingsStore.instance.formatMoney(values[index]),
-                  style: GoogleFonts.outfit(
-                    color: scheme.primary,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
-      ),
-      titlesData: FlTitlesData(
-        leftTitles: const AxisTitles(
-          sideTitles: SideTitles(showTitles: false),
-        ),
-        rightTitles: const AxisTitles(
-          sideTitles: SideTitles(showTitles: false),
-        ),
-        topTitles: const AxisTitles(
-          sideTitles: SideTitles(showTitles: false),
-        ),
-        bottomTitles: AxisTitles(
-          sideTitles: SideTitles(
-            showTitles: true,
-            interval: 1,
-            reservedSize: 28,
-            getTitlesWidget: (value, meta) {
-              final index = value.toInt();
-              if (index < 0 || index >= labels.length) {
-                return const SizedBox.shrink();
-              }
-              final isCurrent = index == currentIndex;
-              return SideTitleWidget(
-                axisSide: meta.axisSide,
-                space: 8,
-                child: Text(
-                  labels[index],
-                  style: GoogleFonts.outfit(
-                    color: isCurrent ? scheme.primary : sari.faintText,
-                    fontSize: 10.5,
-                    fontWeight: isCurrent ? FontWeight.w800 : FontWeight.w600,
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ),
-      barGroups: List.generate(values.length, (index) {
-        final isCurrent = index == currentIndex;
-        return BarChartGroupData(
-          x: index,
-          barRods: [
-            BarChartRodData(
-              toY: values[index] * progress,
-              width: values.length > 7 ? 10 : 16,
-              borderRadius: const BorderRadius.all(Radius.circular(8)),
-              gradient: LinearGradient(
-                begin: Alignment.bottomCenter,
-                end: Alignment.topCenter,
-                colors: isCurrent
-                    ? [
-                        scheme.primary.withValues(alpha: 0.7),
-                        scheme.primary,
-                      ]
-                    : [
-                        scheme.primary.withValues(alpha: 0.35),
-                        scheme.primary.withValues(alpha: 0.65),
-                      ],
-              ),
-              backDrawRodData: BackgroundBarChartRodData(
-                show: true,
-                toY: chartMax,
-                color: scheme.onSurface.withValues(alpha: 0.05),
-              ),
             ),
-          ],
-        );
-      }),
+          ),
+      ],
     );
   }
 }
 
-class _Reveal extends StatefulWidget {
-  const _Reveal({required this.child, this.delay = Duration.zero});
+class _DashLinePainter extends CustomPainter {
+  _DashLinePainter(this.color);
 
-  final Widget child;
-  final Duration delay;
-
-  @override
-  State<_Reveal> createState() => _RevealState();
-}
-
-class _RevealState extends State<_Reveal>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 550),
-  );
-  late final Animation<double> _curve =
-      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic);
-  late final Animation<Offset> _offset =
-      Tween<Offset>(begin: const Offset(0, 0.08), end: Offset.zero)
-          .animate(_curve);
-  Timer? _timer;
+  final Color color;
 
   @override
-  void initState() {
-    super.initState();
-    _timer = Timer(widget.delay, () {
-      if (mounted) _controller.forward();
-    });
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+    const dash = 3.0;
+    const gap = 2.0;
+    var x = 0.0;
+    final y = size.height / 2;
+    while (x < size.width) {
+      canvas.drawLine(
+        Offset(x, y),
+        Offset(math.min(x + dash, size.width), y),
+        paint,
+      );
+      x += dash + gap;
+    }
   }
 
   @override
-  void dispose() {
-    _timer?.cancel();
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _curve,
-      child: SlideTransition(position: _offset, child: widget.child),
-    );
-  }
-}
-
-class _CountUp extends StatelessWidget {
-  const _CountUp({required this.value, required this.builder});
-
-  final double value;
-  final Widget Function(BuildContext context, double value) builder;
-
-  @override
-  Widget build(BuildContext context) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween<double>(begin: 0, end: value),
-      duration: const Duration(milliseconds: 900),
-      curve: Curves.easeOutCubic,
-      builder: (context, v, _) => builder(context, v),
-    );
-  }
+  bool shouldRepaint(covariant _DashLinePainter oldDelegate) =>
+      oldDelegate.color != color;
 }

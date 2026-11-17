@@ -1,21 +1,25 @@
 import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 
+import '../../core/widgets/app_bottom_nav.dart';
+import '../../core/widgets/app_page_header.dart';
 import '../../l10n/app_localizations.dart';
+import '../../services/user_profile_store.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/product_image.dart';
 
-import '../dashboard/dashboard_section.dart';
 import '../orders/orders_screen.dart';
+import '../orders/transactions_screen.dart';
 import '../settings/settings_screen.dart';
 import '../credit/credit_screen.dart';
 import 'edit_profile_screen.dart';
@@ -32,12 +36,7 @@ class _CropArgs {
   final int height;
   final int quality;
 
-  const _CropArgs(
-    this.bytes,
-    this.width,
-    this.height,
-    this.quality,
-  );
+  const _CropArgs(this.bytes, this.width, this.height, this.quality);
 }
 
 Uint8List _cropToJpeg(_CropArgs args) {
@@ -54,23 +53,19 @@ Uint8List _cropToJpeg(_CropArgs args) {
     args.height / source.height,
   );
 
-  final cropWidth =
-      (args.width / scale).round().clamp(1, source.width);
+  final cropWidth = (args.width / scale).round().clamp(1, source.width);
 
-  final cropHeight =
-      (args.height / scale).round().clamp(1, source.height);
+  final cropHeight = (args.height / scale).round().clamp(1, source.height);
 
-  final cropX =
-      ((source.width - cropWidth) / 2).round().clamp(
-            0,
-            source.width - cropWidth,
-          );
+  final cropX = ((source.width - cropWidth) / 2).round().clamp(
+    0,
+    source.width - cropWidth,
+  );
 
-  final cropY =
-      ((source.height - cropHeight) / 2).round().clamp(
-            0,
-            source.height - cropHeight,
-          );
+  final cropY = ((source.height - cropHeight) / 2).round().clamp(
+    0,
+    source.height - cropHeight,
+  );
 
   final cropped = img.copyCrop(
     source,
@@ -86,9 +81,7 @@ Uint8List _cropToJpeg(_CropArgs args) {
     height: args.height,
   );
 
-  return Uint8List.fromList(
-    img.encodeJpg(resized, quality: args.quality),
-  );
+  return Uint8List.fromList(img.encodeJpg(resized, quality: args.quality));
 }
 
 // Convert selected image into a base64 data URL.
@@ -168,11 +161,7 @@ class ProfileScreen extends StatefulWidget {
   final String? userName;
   final ValueChanged<String>? onNameChanged;
 
-  const ProfileScreen({
-    super.key,
-    this.userName,
-    this.onNameChanged,
-  });
+  const ProfileScreen({super.key, this.userName, this.onNameChanged});
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -184,6 +173,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   SariColors get sari => context.sari;
   ColorScheme get scheme => Theme.of(context).colorScheme;
 
+  @override
+  void initState() {
+    super.initState();
+    UserProfileStore.instance.ensureLoaded();
+  }
+
   User? get _user => FirebaseAuth.instance.currentUser;
 
   DocumentReference<Map<String, dynamic>>? get _userDocument {
@@ -191,9 +186,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     if (user == null) return null;
 
-    return FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid);
+    return FirebaseFirestore.instance.collection('users').doc(user.uid);
   }
 
   bool _uploadingAvatar = false;
@@ -212,13 +205,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
       throw Exception('User is not logged in.');
     }
 
-    await document.set(
-      {
-        ...fields,
-        'updated_at': FieldValue.serverTimestamp(),
-      },
-      SetOptions(merge: true),
-    );
+    await document.set({
+      ...fields,
+      'updated_at': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
   }
 
   // ==========================================================
@@ -245,9 +235,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         quality: 85,
       );
 
-      await _saveUser({
-        'profile_image': dataUrl,
-      });
+      await _saveUser({'profile_image': dataUrl});
 
       if (!mounted) return;
 
@@ -289,9 +277,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         quality: 70,
       );
 
-      await _saveUser({
-        'cover_image': dataUrl,
-      });
+      await _saveUser({'cover_image': dataUrl});
 
       if (!mounted) return;
 
@@ -315,11 +301,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // ==========================================================
 
   Future<void> _openEditProfile() async {
-    final updated = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => const EditProfileScreen(),
-      ),
-    );
+    final updated = await Navigator.of(
+      context,
+    ).push<bool>(MaterialPageRoute(builder: (_) => const EditProfileScreen()));
 
     if (updated == true && mounted) {
       await _refreshName();
@@ -341,11 +325,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       final data = snapshot.data() ?? {};
 
-      final name = _readString(
-        data,
-        ['full_name', 'name', 'firstName'],
-        fallback: user.displayName ?? 'User',
-      );
+      final name = _readString(data, [
+        'full_name',
+        'name',
+        'firstName',
+      ], fallback: user.displayName ?? 'User');
 
       _notifyNameChanged(name);
     } catch (e) {
@@ -374,9 +358,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
-          .get(
-            const GetOptions(source: Source.server),
-          );
+          .get(const GetOptions(source: Source.server));
     } catch (e) {
       debugPrint('Refresh error: $e');
     }
@@ -394,8 +376,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ..showSnackBar(
         SnackBar(
           content: Text(message),
-          backgroundColor:
-              error ? Colors.red.shade700 : sari.success,
+          backgroundColor: error ? Colors.red.shade700 : sari.success,
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -474,18 +455,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 decoration: BoxDecoration(
                   color: sari.warning,
                   shape: BoxShape.circle,
-                  border: Border.all(
-                    color: sari.cardSurfaceStrong,
-                    width: 2,
-                  ),
+                  border: Border.all(color: sari.cardSurfaceStrong, width: 2),
                 ),
                 child: _uploadingAvatar
                     ? const SizedBox(
                         width: 12,
                         height: 12,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                        ),
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : Icon(
                         Icons.camera_alt_rounded,
@@ -513,18 +489,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       decoration: BoxDecoration(
         color: sari.success.withValues(alpha: 0.18),
         image: bytes != null
+            ? DecorationImage(image: MemoryImage(bytes), fit: BoxFit.cover)
+            : coverUrl.isNotEmpty && !coverUrl.startsWith('data:image')
             ? DecorationImage(
-                image: MemoryImage(bytes),
+                image: NetworkImage(coverUrl),
                 fit: BoxFit.cover,
+                onError: (_, __) {},
               )
-            : coverUrl.isNotEmpty &&
-                    !coverUrl.startsWith('data:image')
-                ? DecorationImage(
-                    image: NetworkImage(coverUrl),
-                    fit: BoxFit.cover,
-                    onError: (_, __) {},
-                  )
-                : null,
+            : null,
       ),
       child: Stack(
         children: [
@@ -585,31 +557,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
     required String coverUrl,
   }) {
     final contactRows = <Widget>[
-      if (phone.isNotEmpty)
-        _contactRow(Icons.phone_outlined, phone),
+      if (phone.isNotEmpty) _contactRow(Icons.phone_outlined, phone),
       if (address.isNotEmpty)
-        _contactRow(
-          Icons.location_on_outlined,
-          address,
-          maxLines: 2,
-        ),
+        _contactRow(Icons.location_on_outlined, address, maxLines: 2),
     ];
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(20),
       child: BackdropFilter(
-        filter: ImageFilter.blur(
-          sigmaX: 8,
-          sigmaY: 8,
-        ),
+        filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
         child: Container(
           decoration: BoxDecoration(
             color: sari.cardSurfaceStrong.withValues(alpha: 0.94),
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: sari.glassBorder,
-              width: 1.2,
-            ),
+            border: Border.all(color: sari.glassBorder, width: 1.2),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -626,11 +587,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          _avatar(
-                            radius: 38,
-                            name: name,
-                            photoUrl: photoUrl,
-                          ),
+                          _avatar(radius: 38, name: name, photoUrl: photoUrl),
                           const Spacer(),
                           Padding(
                             padding: const EdgeInsets.only(bottom: 4),
@@ -661,8 +618,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           Wrap(
                             spacing: 8,
                             runSpacing: 5,
-                            crossAxisAlignment:
-                                WrapCrossAlignment.center,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               if (username.isNotEmpty)
                                 Text(
@@ -673,8 +629,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
-                              if (storeName.isNotEmpty)
-                                _storeChip(storeName),
+                              if (storeName.isNotEmpty) _storeChip(storeName),
                             ],
                           ),
 
@@ -696,10 +651,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                     if (contactRows.isNotEmpty) ...[
                       const SizedBox(height: 0),
-                      Divider(
-                        color: sari.glassBorder,
-                        height: 1,
-                      ),
+                      Divider(color: sari.glassBorder, height: 1),
                       const SizedBox(height: 12),
                       for (var i = 0; i < contactRows.length; i++) ...[
                         if (i > 0) const SizedBox(height: 9),
@@ -731,16 +683,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
           height: 36,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            border: Border.all(
-              color: sari.warning,
-              width: 1.3,
-            ),
+            border: Border.all(color: sari.warning, width: 1.3),
           ),
-          child: Icon(
-            Icons.edit_outlined,
-            size: 17,
-            color: sari.warning,
-          ),
+          child: Icon(Icons.edit_outlined, size: 17, color: sari.warning),
         ),
       ),
     );
@@ -752,10 +697,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _storeChip(String text) {
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 9,
-        vertical: 4,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
       decoration: BoxDecoration(
         color: sari.success.withValues(alpha: 0.18),
         borderRadius: BorderRadius.circular(10),
@@ -763,11 +705,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            Icons.storefront_outlined,
-            size: 13,
-            color: sari.success,
-          ),
+          Icon(Icons.storefront_outlined, size: 13, color: sari.success),
           const SizedBox(width: 5),
           Flexible(
             child: Text(
@@ -790,19 +728,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // CONTACT ROW
   // ==========================================================
 
-  Widget _contactRow(
-    IconData icon,
-    String text, {
-    int maxLines = 1,
-  }) {
+  Widget _contactRow(IconData icon, String text, {int maxLines = 1}) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(
-          icon,
-          size: 16,
-          color: sari.mutedText,
-        ),
+        Icon(icon, size: 16, color: sari.mutedText),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
@@ -821,38 +751,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   // ==========================================================
-  // GLASS CARD
-  // ==========================================================
-
-  Widget _glassCard({
-    required Widget child,
-    EdgeInsetsGeometry padding = const EdgeInsets.all(12),
-  }) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(
-          sigmaX: 8,
-          sigmaY: 8,
-        ),
-        child: Container(
-          width: double.infinity,
-          padding: padding,
-          decoration: BoxDecoration(
-            color: sari.cardSurfaceStrong.withValues(alpha: 0.92),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: sari.glassBorder,
-              width: 1.2,
-            ),
-          ),
-          child: child,
-        ),
-      ),
-    );
-  }
-
-  // ==========================================================
   // MENU GROUP
   // ==========================================================
 
@@ -861,10 +759,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       decoration: BoxDecoration(
         color: sari.cardSurfaceStrong.withValues(alpha: 0.90),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: sari.glassBorder,
-          width: 1,
-        ),
+        border: Border.all(color: sari.glassBorder, width: 1),
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(18),
@@ -898,9 +793,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       onTap: () async {
         await Navigator.push(
           context,
-          MaterialPageRoute(
-            builder: (_) => entry.destination,
-          ),
+          MaterialPageRoute(builder: (_) => entry.destination),
         );
 
         if (mounted) {
@@ -908,10 +801,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         }
       },
       child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: 14,
-          vertical: 12,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Row(
           children: [
             Container(
@@ -920,11 +810,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 color: sari.success.withValues(alpha: 0.22),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(
-                entry.icon,
-                color: sari.success,
-                size: 18,
-              ),
+              child: Icon(entry.icon, color: sari.success, size: 18),
             ),
 
             const SizedBox(width: 12),
@@ -946,20 +832,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     entry.subtitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: sari.mutedText,
-                      fontSize: 11.5,
-                    ),
+                    style: TextStyle(color: sari.mutedText, fontSize: 11.5),
                   ),
                 ],
               ),
             ),
 
-            Icon(
-              Icons.chevron_right_rounded,
-              color: sari.warning,
-              size: 20,
-            ),
+            Icon(Icons.chevron_right_rounded, color: sari.warning, size: 20),
           ],
         ),
       ),
@@ -980,19 +859,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final document = _userDocument;
 
     if (user == null || document == null) {
-      return const Scaffold(
-        body: Center(
-          child: Text('Hindi naka-login.'),
-        ),
-      );
+      return const Scaffold(body: Center(child: Text('Hindi naka-login.')));
     }
 
     return Scaffold(
       resizeToAvoidBottomInset: false,
       body: Container(
-        decoration: BoxDecoration(
-          gradient: sari.screenGradient,
-        ),
+        decoration: BoxDecoration(gradient: sari.screenGradient),
         child: SafeArea(
           child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
             // Live Firestore listener:
@@ -1011,64 +884,53 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
               if (!snapshot.hasData) {
                 return Center(
-                  child: CircularProgressIndicator(
-                    color: sari.success,
-                  ),
+                  child: CircularProgressIndicator(color: sari.success),
                 );
               }
 
-              final data = snapshot.data!.data() ??
-                  <String, dynamic>{};
+              final data = snapshot.data!.data() ?? <String, dynamic>{};
 
               // Support web and mobile field names.
-              final name = _readString(
-                data,
-                ['full_name', 'name', 'firstName'],
-                fallback: widget.userName ??
-                    user.displayName ??
-                    'User',
-              );
+              final name = _readString(data, [
+                'full_name',
+                'name',
+                'firstName',
+              ], fallback: widget.userName ?? user.displayName ?? 'User');
 
-              final storeName = _readString(
-                data,
-                ['store_name', 'storeName'],
-                fallback: 'My Store',
-              );
+              final storeName = _readString(data, [
+                'store_name',
+                'storeName',
+              ], fallback: 'My Store');
 
-              final username = _readString(
-                data,
-                ['username'],
-              );
+              final username = _readString(data, ['username']);
 
-              final photoUrl = _readString(
-                data,
-                ['profile_image', 'photoUrl', 'photo_url'],
-              );
+              final photoUrl = _readString(data, [
+                'profile_image',
+                'photoUrl',
+                'photo_url',
+              ]);
 
-              final coverUrl = _readString(
-                data,
-                ['cover_image', 'coverImage', 'cover_url'],
-              );
+              final coverUrl = _readString(data, [
+                'cover_image',
+                'coverImage',
+                'cover_url',
+              ]);
 
-              final email = _readString(
-                data,
-                ['email'],
-                fallback: user.email ?? '',
-              );
+              final email = _readString(data, [
+                'email',
+              ], fallback: user.email ?? '');
 
-              final phone = _readString(
-                data,
-                ['phone', 'phone_number', 'phoneNumber'],
-              );
+              final phone = _readString(data, [
+                'phone',
+                'phone_number',
+                'phoneNumber',
+              ]);
 
-              final address = _readString(
-                data,
-                [
-                  'store_address',
-                  'address',
-                  'storeAddress',
-                ],
-              );
+              final address = _readString(data, [
+                'store_address',
+                'address',
+                'storeAddress',
+              ]);
 
               // Notify parent when owner name changes.
               if (name != _lastNotifiedName) {
@@ -1091,26 +953,63 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     horizontal,
                     6,
                     horizontal,
-                    12,
+                    AppBottomNav.safeBodyBottomInset(),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // PROFILE TITLE
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(
-                          4,
-                          4,
-                          4,
-                          12,
-                        ),
-                        child: Text(
-                          l10n.text('profileTitle'),
-                          style: TextStyle(
-                            color: scheme.onSurface,
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 0.2,
+                        padding: const EdgeInsets.fromLTRB(0, 6, 4, 4),
+                        child: SizedBox(
+                          height: 56,
+                          child: Row(
+                            children: [
+                              AppPageHeader.iconBadge(
+                                context: context,
+                                icon: Icons.person_rounded,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      l10n.text('profileTitle'),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: GoogleFonts.outfit(
+                                        color: scheme.onSurface,
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      DateFormat(
+                                        'EEEE, MMM d',
+                                        Localizations.localeOf(context)
+                                            .languageCode,
+                                      ).format(DateTime.now()),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: GoogleFonts.outfit(
+                                        color: sari.mutedText,
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Padding(
+                                padding: const EdgeInsets.only(left: 6),
+                                child: AppPageHeader.avatarAction(
+                                  context: context,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
@@ -1127,18 +1026,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         coverUrl: coverUrl,
                       ),
 
-                      // DASHBOARD SECTION
-                      const SizedBox(height: 12),
-                      const DashboardSection(),
-
                       // MANAGE SECTION
                       const SizedBox(height: 18),
 
                       Padding(
-                        padding: const EdgeInsets.only(
-                          left: 4,
-                          bottom: 8,
-                        ),
+                        padding: const EdgeInsets.only(left: 4, bottom: 8),
                         child: Text(
                           l10n.text('manage'),
                           style: TextStyle(
@@ -1157,6 +1049,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           title: l10n.text('orders'),
                           subtitle: l10n.text('ordersSubtitle'),
                           destination: const OrdersScreen(),
+                        ),
+                        const _MenuEntry(
+                          icon: Icons.receipt_long_outlined,
+                          title: 'Transactions',
+                          subtitle: 'View sales and payment history',
+                          destination: TransactionsScreen(),
                         ),
                         _MenuEntry(
                           icon: Icons.assignment_outlined,

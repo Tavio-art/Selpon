@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_card.dart';
 import '../../core/widgets/app_snackbar.dart';
@@ -11,6 +12,7 @@ import '../../models/notification_item.dart';
 import '../../services/notification_store.dart';
 import '../credit/credit_screen.dart';
 import '../orders/orders_screen.dart';
+import '../orders/transactions_screen.dart';
 
 class NotificationsScreen extends StatefulWidget {
   final ValueChanged<NotificationType>? onOpenRelated;
@@ -62,8 +64,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   Future<void> _onMarkAllRead() async {
     if (_store.unreadCount == 0) {
-      AppSnackbar.showInfo(
-          context, context.l10n.text('noUnreadNotifications'));
+      AppSnackbar.showInfo(context, context.l10n.text('noUnreadNotifications'));
       return;
     }
     await _store.markAllAsRead();
@@ -84,8 +85,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     if (confirmed != true) return;
     await _store.clearAll();
     if (!mounted) return;
-    AppSnackbar.showSuccess(
-        context, context.l10n.text('notificationsCleared'));
+    AppSnackbar.showSuccess(context, context.l10n.text('notificationsCleared'));
   }
 
   Future<void> _onTapItem(NotificationItem n) async {
@@ -98,22 +98,20 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         break;
       case NotificationType.payment:
       case NotificationType.orderReady:
-        await Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const OrdersScreen()),
-        );
+        await Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => const OrdersScreen()));
         break;
       case NotificationType.creditOverdue:
-        await Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const CreditScreen()),
-        );
+        await Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => const CreditScreen()));
         break;
       case NotificationType.inventory:
         widget.onOpenRelated?.call(n.type);
         break;
       case NotificationType.transaction:
-        await Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const OrdersScreen()),
-        );
+        await Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const TransactionsScreen()));
         break;
     }
   }
@@ -152,6 +150,111 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
+  DateTime? _manilaDate(DateTime? date) {
+    if (date == null) return null;
+    final manila = date.toUtc().add(const Duration(hours: 8));
+    return DateTime.utc(manila.year, manila.month, manila.day);
+  }
+
+  bool _isToday(NotificationItem item) {
+    final date = _manilaDate(item.createdAt);
+    final now = _manilaDate(DateTime.now());
+    return date != null && date == now;
+  }
+
+  Widget _sectionTitle(String title, BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 10),
+      child: Text(
+        title,
+        style: GoogleFonts.outfit(
+          color: Theme.of(context).colorScheme.onSurface,
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _notificationCard(NotificationItem n) {
+    final dot = _dotColor(n.type, context);
+    final sari = context.sari;
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: AppCard(
+        padding: const EdgeInsets.all(14),
+        onTap: () => _onTapItem(n),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: dot.withValues(alpha: 0.16),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(_typeIcon(n.type), size: 20, color: dot),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          n.title,
+                          style: GoogleFonts.outfit(
+                            color: scheme.onSurface,
+                            fontWeight: n.unread
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ),
+                      if (n.unread)
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: dot,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    n.subtitle,
+                    style: GoogleFonts.outfit(
+                      color: sari.mutedText,
+                      fontSize: 13,
+                      height: 1.35,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    n.displayTime(context.l10n),
+                    style: GoogleFonts.outfit(
+                      color: sari.faintText,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            Icon(Icons.chevron_right_rounded, color: sari.faintText, size: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -169,6 +272,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               final items = _store.items
                   .where((n) => !_showUnreadOnly || n.unread)
                   .toList();
+              final todayItems = items.where(_isToday).toList();
+              final earlierItems = items.where((n) => !_isToday(n)).toList();
 
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -176,6 +281,25 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   const SizedBox(height: 12),
                   Row(
                     children: [
+                      if (Navigator.of(context).canPop()) ...[
+                        Material(
+                          color: sari.fieldFill,
+                          shape: const CircleBorder(),
+                          child: InkWell(
+                            customBorder: const CircleBorder(),
+                            onTap: () => Navigator.of(context).pop(),
+                            child: Padding(
+                              padding: const EdgeInsets.all(10),
+                              child: Icon(
+                                Icons.arrow_back_rounded,
+                                color: scheme.onSurface,
+                                size: 20,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                      ],
                       Expanded(
                         child: Text(
                           context.l10n.text('notificationsTitle'),
@@ -252,106 +376,40 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   Expanded(
                     child: !_store.isLoaded
                         ? const LoadingIndicator()
+                        : _store.errorMessage != null
+                        ? EmptyState(
+                            icon: Icons.error_outline_rounded,
+                            title: 'Could not load notifications',
+                            message: _store.errorMessage!,
+                            actionLabel: 'Retry',
+                            onAction: () {
+                              _store.reloadForCurrentUser();
+                            },
+                          )
                         : items.isEmpty
-                            ? EmptyState(
-                                icon: Icons.notifications_none_rounded,
-                                title: _showUnreadOnly
-                                    ? context.l10n.text('noUnreadNotifications')
-                                    : context.l10n.text('noNotificationsYet'),
-                                message: context.l10n.text('notifEmptyHint'),
-                              )
-                            : ListView.separated(
-                                physics: const BouncingScrollPhysics(),
-                                padding: const EdgeInsets.only(bottom: 96),
-                                itemCount: items.length,
-                                separatorBuilder: (_, __) =>
-                                    const SizedBox(height: 10),
-                                itemBuilder: (context, index) {
-                                  final n = items[index];
-                                  final dot = _dotColor(n.type, context);
-
-                                  return AppCard(
-                                    padding: const EdgeInsets.all(14),
-                                    onTap: () => _onTapItem(n),
-                                    child: Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Container(
-                                          width: 40,
-                                          height: 40,
-                                          decoration: BoxDecoration(
-                                            color: dot.withValues(alpha: 0.16),
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: Icon(
-                                            _typeIcon(n.type),
-                                            size: 20,
-                                            color: dot,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 14),
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Row(
-                                                children: [
-                                                  Expanded(
-                                                    child: Text(
-                                                      n.title,
-                                                      style: GoogleFonts.outfit(
-                                                        color: scheme.onSurface,
-                                                        fontWeight: n.unread
-                                                            ? FontWeight.w700
-                                                            : FontWeight.w500,
-                                                        fontSize: 15,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                  if (n.unread)
-                                                    Container(
-                                                      width: 8,
-                                                      height: 8,
-                                                      decoration: BoxDecoration(
-                                                        color: dot,
-                                                        shape: BoxShape.circle,
-                                                      ),
-                                                    ),
-                                                ],
-                                              ),
-                                              const SizedBox(height: 4),
-                                              Text(
-                                                n.subtitle,
-                                                style: GoogleFonts.outfit(
-                                                  color: sari.mutedText,
-                                                  fontSize: 13,
-                                                  height: 1.35,
-                                                ),
-                                              ),
-                                              const SizedBox(height: 6),
-                                              Text(
-                                                n.displayTime(context.l10n),
-                                                style: GoogleFonts.outfit(
-                                                  color: sari.faintText,
-                                                  fontSize: 12,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                        const SizedBox(width: 6),
-                                        Icon(
-                                          Icons.chevron_right_rounded,
-                                          color: sari.faintText,
-                                          size: 20,
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                              ),
+                        ? EmptyState(
+                            icon: Icons.notifications_none_rounded,
+                            title: _showUnreadOnly
+                                ? 'No unread notifications'
+                                : 'No notifications yet',
+                            message: '',
+                          )
+                        : ListView(
+                            physics: const BouncingScrollPhysics(),
+                            padding: const EdgeInsets.only(bottom: 96),
+                            children: [
+                              if (todayItems.isNotEmpty) ...[
+                                _sectionTitle('Today', context),
+                                for (final item in todayItems)
+                                  _notificationCard(item),
+                              ],
+                              if (earlierItems.isNotEmpty) ...[
+                                _sectionTitle('Earlier', context),
+                                for (final item in earlierItems)
+                                  _notificationCard(item),
+                              ],
+                            ],
+                          ),
                   ),
                 ],
               );

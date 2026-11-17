@@ -37,14 +37,18 @@ class DashboardMetrics {
     final soldByName = <String, int>{};
 
     for (final order in orders) {
-      final createdAt = order.createdAt;
+      final createdAt = order.createdAt?.toUtc().add(const Duration(hours: 8));
       if (createdAt != null) {
         if (isSameDay(createdAt, reference)) {
           salesToday += order.total;
           transactionsToday++;
         }
 
-        final day = DateTime(createdAt.year, createdAt.month, createdAt.day);
+        final day = DateTime.utc(
+          createdAt.year,
+          createdAt.month,
+          createdAt.day,
+        );
         final weekdayOffset = day.difference(weekStart).inDays;
         if (weekdayOffset >= 0 && weekdayOffset < weeklySales.length) {
           weeklySales[weekdayOffset] += order.total;
@@ -58,16 +62,19 @@ class DashboardMetrics {
       }
     }
 
-    final topSellers = soldByName.entries
-        .map((entry) => DashboardSeller(
-              name: entry.key,
-              quantity: entry.value,
-            ))
-        .toList()
-      ..sort((a, b) {
-        final quantityOrder = b.quantity.compareTo(a.quantity);
-        return quantityOrder != 0 ? quantityOrder : a.name.compareTo(b.name);
-      });
+    final topSellers =
+        soldByName.entries
+            .map(
+              (entry) =>
+                  DashboardSeller(name: entry.key, quantity: entry.value),
+            )
+            .toList()
+          ..sort((a, b) {
+            final quantityOrder = b.quantity.compareTo(a.quantity);
+            return quantityOrder != 0
+                ? quantityOrder
+                : a.name.compareTo(b.name);
+          });
 
     return DashboardMetrics(
       salesToday: salesToday,
@@ -89,7 +96,7 @@ class DashboardMetrics {
       a.year == b.year && a.month == b.month && a.day == b.day;
 
   static DateTime startOfWeek(DateTime date) {
-    final startOfDay = DateTime(date.year, date.month, date.day);
+    final startOfDay = DateTime.utc(date.year, date.month, date.day);
     return startOfDay.subtract(Duration(days: date.weekday - 1));
   }
 }

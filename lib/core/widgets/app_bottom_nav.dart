@@ -1,12 +1,53 @@
-
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:sari_app/services/notification_store.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
 
 class AppBottomNav extends StatelessWidget {
+  /// Pill bar height inside [AppBottomNav].
+  static const double barHeight = 72;
+
+  /// Bottom padding under the pill (see [build]).
+  static const double bottomPadding = 12;
+
+  /// Scan FAB is `Transform.translate`d up by this amount above the bar.
+  static const double scanOvershoot = 12;
+
+  /// Clear air between content/popups and the top of the Scan FAB.
+  static const double clearGap = 14;
+
+  /// Floating nav chrome above the system bottom inset:
+  /// bar + bottom padding + Scan FAB overshoot.
+  static const double chromeHeight =
+      barHeight + bottomPadding + scanOvershoot; // 96
+
+  /// True system/gesture inset. Use [viewPadding] — with
+  /// [Scaffold.extendBody] true, [MediaQuery.padding.bottom] is inflated to
+  /// the bottomNavigationBar height and must not be reused as "system" inset.
+  static double systemBottomInset(BuildContext context) =>
+      MediaQuery.viewPaddingOf(context).bottom;
+
+  /// Physical screen bottom → top of the Scan FAB.
+  static double occupiedHeight(BuildContext context) =>
+      systemBottomInset(context) + chromeHeight;
+
+  /// Bottom inset for full-bleed stacks (body draws under the nav;
+  /// SafeArea bottom: false). Counts chrome once from viewPadding.
+  static double bodyBottomInset(BuildContext context) =>
+      occupiedHeight(context) + clearGap;
+
+  /// Extra scroll/overlay inset when SafeArea (or extendBody MediaQuery
+  /// padding) already cleared the nav bar layout height — only Scan
+  /// overshoot + gap remain.
+  static double safeBodyBottomInset() => scanOvershoot + clearGap;
+
+  /// Bottom offset for floating toasts/SnackBars above the nav + Scan FAB.
+  /// Use when the overlay is positioned against the physical screen bottom
+  /// (SafeArea bottom: false / full-bleed stack).
+  static double toastBottomInset(BuildContext context) =>
+      bodyBottomInset(context);
+
   final int currentIndex;
   final ValueChanged<int> onTap;
 
@@ -41,9 +82,9 @@ class AppBottomNav extends StatelessWidget {
         label: l10n.text('navScan'),
       ),
       (
-        icon: Icons.notifications_none_rounded,
-        selectedIcon: Icons.notifications_rounded,
-        label: l10n.text('navNotif'),
+        icon: Icons.bar_chart_outlined,
+        selectedIcon: Icons.bar_chart_rounded,
+        label: l10n.text('navDashboard'),
       ),
       (
         icon: Icons.person_outline_rounded,
@@ -55,9 +96,9 @@ class AppBottomNav extends StatelessWidget {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+        padding: const EdgeInsets.fromLTRB(18, 0, 18, bottomPadding),
         child: Container(
-          height: 72,
+          height: barHeight,
           decoration: BoxDecoration(
             color: sari.navBarBackground,
             borderRadius: BorderRadius.circular(38),
@@ -90,7 +131,7 @@ class AppBottomNav extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Transform.translate(
-                              offset: const Offset(0, -12),
+                              offset: const Offset(0, -scanOvershoot),
                               child: Container(
                                 width: 54,
                                 height: 54,
@@ -135,62 +176,30 @@ class AppBottomNav extends StatelessWidget {
                             Stack(
                               clipBehavior: Clip.none,
                               children: [
-                                Icon(
-                                  selected
-                                      ? item.selectedIcon
-                                      : item.icon,
-                                  color: selected
-                                      ? scheme.primary
-                                      : sari.faintText,
-                                  size: 24,
-                                ),
-                                if (index == 3)
-                                  ListenableBuilder(
-                                    listenable: NotificationStore.instance,
-                                    builder: (context, _) {
-                                      final unread = NotificationStore
-                                          .instance.unreadCount;
-
-                                      if (unread <= 0) {
-                                        return const SizedBox.shrink();
-                                      }
-
-                                      return Positioned(
-                                        right: -6,
-                                        top: -3,
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 4,
-                                            vertical: 1,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: sari.danger,
-                                            borderRadius:
-                                                BorderRadius.circular(10),
-                                          ),
-                                          constraints: const BoxConstraints(
-                                            minWidth: 14,
-                                            minHeight: 14,
-                                          ),
-                                          child: Text(
-                                            unread > 9 ? '9+' : '$unread',
-                                            textAlign: TextAlign.center,
-                                            style: GoogleFonts.outfit(
-                                              color: Colors.white,
-                                              fontSize: 8,
-                                              fontWeight: FontWeight.bold,
-                                              height: 1,
-                                            ),
-                                          ),
-                                        ),
-                                      );
-                                    },
+                                AnimatedScale(
+                                  scale: selected ? 1.08 : 1.0,
+                                  duration: MediaQuery.disableAnimationsOf(
+                                          context)
+                                      ? Duration.zero
+                                      : const Duration(milliseconds: 200),
+                                  curve: Curves.easeOutCubic,
+                                  child: Icon(
+                                    selected
+                                        ? item.selectedIcon
+                                        : item.icon,
+                                    color: selected
+                                        ? scheme.primary
+                                        : sari.faintText,
+                                    size: 24,
                                   ),
+                                ),
                               ],
                             ),
                             const SizedBox(height: 4),
-                            Text(
-                              item.label,
+                            AnimatedDefaultTextStyle(
+                              duration: MediaQuery.disableAnimationsOf(context)
+                                  ? Duration.zero
+                                  : const Duration(milliseconds: 200),
                               style: GoogleFonts.outfit(
                                 color: selected
                                     ? scheme.primary
@@ -200,6 +209,7 @@ class AppBottomNav extends StatelessWidget {
                                     ? FontWeight.w700
                                     : FontWeight.w500,
                               ),
+                              child: Text(item.label),
                             ),
                           ],
                         ),

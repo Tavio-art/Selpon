@@ -132,7 +132,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         final sheetSari = ctx.sari;
         final sheetScheme = Theme.of(ctx).colorScheme;
         final options = <(ThemeMode, String)>[
-          (ThemeMode.system, l10n.text('themeSystem')),
           (ThemeMode.light, l10n.text('themeLight')),
           (ThemeMode.dark, l10n.text('themeDark')),
         ];
@@ -430,11 +429,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 subtitle: l10n.text('appearanceSubtitle'),
                                 onTap: _pickThemeMode,
                                 value: l10n.themeModeName(
-                                  switch (_settings.themeMode) {
-                                    ThemeMode.light => 'light',
-                                    ThemeMode.dark => 'dark',
-                                    ThemeMode.system => 'system',
-                                  },
+                                  _settings.themeMode == ThemeMode.light
+                                      ? 'light'
+                                      : 'dark',
                                 ),
                               ),
                             ],

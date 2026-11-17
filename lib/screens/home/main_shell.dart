@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 
 import '../../models/notification_item.dart';
@@ -8,9 +7,11 @@ import '../../widgets/app_bottom_nav.dart';
 
 import '../cart/cart_screen.dart';
 import '../credit/credit_screen.dart';
+import '../dashboard/dashboard_section.dart';
 import '../inventory/inventory_screen.dart';
 import '../notifications/notifications_screen.dart';
 import '../orders/orders_screen.dart';
+import '../orders/transactions_screen.dart';
 import '../profile/profile_screen.dart';
 import '../scan/scan_screen.dart';
 import 'home_screen.dart';
@@ -21,8 +22,11 @@ class MainShell extends StatefulWidget {
   static const int homeTab = 0;
   static const int inventoryTab = 1;
   static const int scanTab = 2;
-  static const int notifTab = 3;
+  static const int dashboardTab = 3;
   static const int profileTab = 4;
+
+  /// Lets covered routes (e.g. Checkout) switch tab after popUntil.
+  static void Function(int index)? requestTab;
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -36,13 +40,13 @@ class _MainShellState extends State<MainShell> {
   void initState() {
     super.initState();
 
+    MainShell.requestTab = _onTabSelected;
     CartStore.instance.onOpenCartRequested = _openCart;
 
     PushNotificationService.instance.onNotificationOpened =
         _handleNotificationOpen;
 
-    final pending =
-        PushNotificationService.instance.consumePendingOpen();
+    final pending = PushNotificationService.instance.consumePendingOpen();
 
     if (pending != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -55,6 +59,9 @@ class _MainShellState extends State<MainShell> {
 
   @override
   void dispose() {
+    if (MainShell.requestTab == _onTabSelected) {
+      MainShell.requestTab = null;
+    }
     CartStore.instance.onOpenCartRequested = null;
     PushNotificationService.instance.onNotificationOpened = null;
     super.dispose();
@@ -68,11 +75,8 @@ class _MainShellState extends State<MainShell> {
     });
 
     try {
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => screen,
-        ),
-      );
+      await Navigator.of(context)
+          .push(MaterialPageRoute(builder: (_) => screen));
     } finally {
       if (mounted) {
         setState(() {
@@ -86,13 +90,12 @@ class _MainShellState extends State<MainShell> {
     _pushRoute(const CartScreen());
   }
 
-  void _openNotif() {
-    _onTabSelected(MainShell.notifTab);
+  void _openNotifications() {
+    _pushRoute(NotificationsScreen(onOpenRelated: _onNotifRelated));
   }
 
   void _onTabSelected(int index) {
-    if (index < MainShell.homeTab ||
-        index > MainShell.profileTab) {
+    if (index < MainShell.homeTab || index > MainShell.profileTab) {
       return;
     }
 
@@ -114,9 +117,12 @@ class _MainShellState extends State<MainShell> {
 
       case NotificationType.payment:
       case NotificationType.orderReady:
-      case NotificationType.transaction:
         _onTabSelected(MainShell.profileTab);
         _pushRoute(const OrdersScreen());
+        break;
+      case NotificationType.transaction:
+        _onTabSelected(MainShell.profileTab);
+        _pushRoute(const TransactionsScreen());
         break;
 
       case NotificationType.creditOverdue:
@@ -151,7 +157,7 @@ class _MainShellState extends State<MainShell> {
           children: [
             HomeScreen(
               onOpenCart: _openCart,
-              onOpenNotif: _openNotif,
+              onOpenNotif: _openNotifications,
               onOpenProfile: () {
                 _onTabSelected(MainShell.profileTab);
               },
@@ -159,12 +165,10 @@ class _MainShellState extends State<MainShell> {
             const InventoryScreen(),
             ScanScreen(
               onOpenCart: _openCart,
-              isActive: _currentIndex == MainShell.scanTab &&
-                  _coveringRoutes == 0,
+              isActive:
+                  _currentIndex == MainShell.scanTab && _coveringRoutes == 0,
             ),
-            NotificationsScreen(
-              onOpenRelated: _onNotifRelated,
-            ),
+            DashboardSection(isActive: _currentIndex == MainShell.dashboardTab),
             const ProfileScreen(),
           ],
         ),

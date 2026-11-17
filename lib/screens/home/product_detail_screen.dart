@@ -4,7 +4,6 @@ import 'package:image_picker/image_picker.dart';
 import '../../data/product_categories.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/product.dart';
-import '../../services/notification_store.dart';
 import '../../services/product_repository.dart';
 import '../../services/settings_store.dart';
 import '../../theme/app_theme.dart';
@@ -287,24 +286,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
           withMeta,
           oldInventoryId: source.id,
         );
-        await NotificationStore.instance.addInventoryEvent(
-          action: 'edited',
-          productName: withMeta.name,
-          stock: withMeta.stock,
-        );
       } else {
         await _products.registerProduct(updatedProduct);
-        await NotificationStore.instance.addInventoryEvent(
-          action: 'added',
-          productName: updatedProduct.name,
-          stock: updatedProduct.stock,
-        );
-      }
-      if (updatedProduct.isLowStock || updatedProduct.isOutOfStock) {
-        await NotificationStore.instance.addLowStockAlert(
-          productName: updatedProduct.name,
-          stock: updatedProduct.stock,
-        );
       }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -373,10 +356,6 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     setState(() => _saving = true);
     try {
       await _products.deleteProduct(widget.product!);
-      await NotificationStore.instance.addInventoryEvent(
-        action: 'deleted',
-        productName: widget.product!.name,
-      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(context.l10n.text('productRemoved'))),
@@ -479,54 +458,52 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 ),
                 Flexible(
                   child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
                     child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        GestureDetector(
-                          onTap: _showImageOptions,
-                          child: Stack(
-                            alignment: Alignment.bottomRight,
-                            children: [
-                              Container(
-                                width: 112,
-                                height: 112,
-                                decoration: BoxDecoration(
-                                  color: sari.imagePlaceholder,
-                                  borderRadius: BorderRadius.circular(28),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: sari.shadow,
-                                      blurRadius: 16,
-                                      offset: const Offset(0, 8),
+                        Center(
+                          child: GestureDetector(
+                            onTap: _showImageOptions,
+                            child: Stack(
+                              alignment: Alignment.bottomRight,
+                              children: [
+                                Container(
+                                  width: 96,
+                                  height: 96,
+                                  decoration: BoxDecoration(
+                                    color: sari.imagePlaceholder,
+                                    borderRadius: BorderRadius.circular(22),
+                                    border: Border.all(color: sari.cardBorder),
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(22),
+                                    child: ProductImage(
+                                      imageUrl: _imageUrl,
+                                      fit: BoxFit.cover,
+                                      placeholderIcon:
+                                          Icons.add_a_photo_outlined,
                                     ),
-                                  ],
-                                ),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(28),
-                                  child: ProductImage(
-                                    imageUrl: _imageUrl,
-                                    fit: BoxFit.cover,
-                                    placeholderIcon: Icons.add_a_photo_outlined,
                                   ),
                                 ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: sari.warning,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: sari.onAccent,
-                                    width: 3,
+                                Container(
+                                  padding: const EdgeInsets.all(7),
+                                  decoration: BoxDecoration(
+                                    color: sari.warning,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: sari.onAccent,
+                                      width: 2,
+                                    ),
                                   ),
+                                  child: Icon(Icons.camera_alt_outlined,
+                                      size: 13, color: sari.onAccent),
                                 ),
-                                child: Icon(Icons.camera_alt_outlined,
-                                    size: 14, color: sari.onAccent),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
-                        const SizedBox(height: 18),
+                        const SizedBox(height: 16),
                         _field(
                           label: context.l10n.text('itemName'),
                           controller: _nameController,
@@ -534,6 +511,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         ),
                         _categoryField(),
                         Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Expanded(
                               child: _field(
@@ -582,7 +560,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                   ),
                                 ),
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 4),
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton(
@@ -633,10 +611,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
 
   Widget _categoryField() {
+    final selected = _categories.contains(_category) ? _category : null;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: DropdownButtonFormField<String>(
-        initialValue: _categories.contains(_category) ? _category : null,
+        key: ValueKey(selected),
+        initialValue: selected,
+        isExpanded: true,
         items: _categories
             .map(
               (c) => DropdownMenuItem(
@@ -647,6 +628,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             .toList(),
         onChanged: (value) {
           if (value == null) return;
+          // Only allow web categories for new picks; legacy values stay until changed.
+          if (!ProductCategories.forPicker.contains(value) &&
+              value != _category) {
+            return;
+          }
           setState(() => _category = value);
         },
         dropdownColor: sari.cardSurfaceStrong,

@@ -82,9 +82,8 @@ class SariApp extends StatelessWidget {
       case ThemeMode.light:
         return Brightness.light;
       case ThemeMode.dark:
-        return Brightness.dark;
       case ThemeMode.system:
-        return MediaQuery.platformBrightnessOf(context);
+        return Brightness.dark;
     }
   }
 

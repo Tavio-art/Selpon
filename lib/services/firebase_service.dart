@@ -1,7 +1,9 @@
 import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+
 import '../models/product.dart';
 import 'product_repository.dart';
 
@@ -15,8 +17,8 @@ class _InventoryDocMissing implements Exception {
 
 class FirebaseService {
   FirebaseService({FirebaseFirestore? firestore, ProductRepository? products})
-      : _db = firestore ?? FirebaseFirestore.instance,
-        _products = products ?? ProductRepository.instance;
+    : _db = firestore ?? FirebaseFirestore.instance,
+      _products = products ?? ProductRepository.instance;
 
   final FirebaseFirestore _db;
   final ProductRepository _products;
@@ -138,12 +140,14 @@ class FirebaseService {
       if (raw['skipInventory'] == true) continue;
       final barcode = (raw['barcode'] ?? raw['id'] ?? '').toString().trim();
       if (barcode.isEmpty) continue;
-      String? catalogProductId =
-          (raw['catalogProductId'] ?? '').toString().trim();
+      String? catalogProductId = (raw['catalogProductId'] ?? '')
+          .toString()
+          .trim();
       if (catalogProductId.isEmpty) {
         try {
-          catalogProductId =
-              (await _products.getCatalogProductByBarcode(barcode))?.id;
+          catalogProductId = (await _products.getCatalogProductByBarcode(
+            barcode,
+          ))?.id;
         } catch (e) {
           _log('catalog id resolve failed for $barcode', e);
         }
@@ -239,8 +243,9 @@ class FirebaseService {
           final lines = <Map<String, dynamic>>[];
 
           for (final raw in items) {
-            final barcode =
-                (raw['barcode'] ?? raw['id'] ?? '').toString().trim();
+            final barcode = (raw['barcode'] ?? raw['id'] ?? '')
+                .toString()
+                .trim();
             final qty = (raw['quantity'] as num?)?.toInt() ?? 0;
             if (barcode.isEmpty || qty <= 0) {
               throw StateError('Invalid cart line: barcode/qty missing');
@@ -255,13 +260,15 @@ class FirebaseService {
                 'skip': true,
                 'barcode': barcode,
                 'name': name,
+                'category': raw['category'],
                 'price': unitPrice,
                 'quantity': qty,
               });
               continue;
             }
 
-            final docId = inventoryIds[barcode] ??
+            final docId =
+                inventoryIds[barcode] ??
                 ProductRepository.inventoryDocId(barcode: barcode);
             qtyByDoc[docId] = (qtyByDoc[docId] ?? 0) + qty;
             nameByDoc.putIfAbsent(docId, () => name);
@@ -270,6 +277,7 @@ class FirebaseService {
               'docId': docId,
               'barcode': barcode,
               'name': name,
+              'category': raw['category'],
               'price': raw['price'],
               'quantity': qty,
             });
@@ -309,6 +317,7 @@ class FirebaseService {
                 'barcode': barcode,
                 'id': barcode,
                 'name': line['name'],
+                'category': line['category'],
                 'price': price,
                 'quantity': qty,
                 'subtotal': price * qty,
@@ -327,6 +336,9 @@ class FirebaseService {
               'barcode': barcode,
               'id': barcode,
               'name': parsed.name.isNotEmpty ? parsed.name : barcode,
+              'category': (line['category'] ?? '').toString().trim().isNotEmpty
+                  ? line['category']
+                  : parsed.category,
               'price': resolvedPrice,
               'quantity': qty,
               'subtotal': resolvedPrice * qty,
@@ -337,6 +349,21 @@ class FirebaseService {
           final nowMs = DateTime.now().millisecondsSinceEpoch;
           final resolvedUserId =
               userId ?? FirebaseAuth.instance.currentUser?.uid ?? '';
+
+          // Firestore requires all reads before any writes. Load any existing
+          // unpaid credit now so same-name utang can merge atomically.
+          DocumentSnapshot<Map<String, dynamic>>? existingCreditSnap;
+          DocumentReference<Map<String, dynamic>>? existingCreditRef;
+          if (credit != null) {
+            final existingId = (credit['existingCreditId'] ?? '')
+                .toString()
+                .trim();
+            if (existingId.isNotEmpty) {
+              existingCreditRef = _credits.doc(existingId);
+              existingCreditSnap = await tx.get(existingCreditRef);
+            }
+          }
+
           tx.set(orderRef, {
             'orderId': orderRef.id,
             'items': resolvedItems,
@@ -352,33 +379,93 @@ class FirebaseService {
           });
 
           for (final entry in qtyByDoc.entries) {
-            tx.set(
-              inv.doc(entry.key),
-              {
-                'stock': FieldValue.increment(-entry.value),
-                'hidden': false,
-                'updatedAt': FieldValue.serverTimestamp(),
-              },
-              SetOptions(merge: true),
-            );
+            tx.set(inv.doc(entry.key), {
+              'stock': FieldValue.increment(-entry.value),
+              'hidden': false,
+              'updatedAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
           }
 
           if (credit != null) {
-            final creditRef = _credits.doc();
-            tx.set(creditRef, {
-              'creditId': creditRef.id,
-              'userId': credit['userId'] ?? resolvedUserId,
-              'customerName': credit['customerName'] ?? customerName,
-              'amount': credit['amount'] ?? totalAmount,
-              'date': credit['date'] ?? '',
-              'isPaid': false,
-              'saleId': orderRef.id,
-              if (credit['items'] is List &&
-                  (credit['items'] as List).isNotEmpty)
-                'items': credit['items'],
-              'createdAt': FieldValue.serverTimestamp(),
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
+            final newAmount =
+                (credit['amount'] as num?)?.toDouble() ?? totalAmount;
+            final newItems = credit['items'] is List
+                ? List<Map<String, dynamic>>.from(
+                    (credit['items'] as List).whereType<Map>().map(
+                      (e) => Map<String, dynamic>.from(e),
+                    ),
+                  )
+                : <Map<String, dynamic>>[];
+            final name = (credit['customerName'] ?? customerName)
+                .toString()
+                .trim();
+
+            final canMerge =
+                existingCreditRef != null &&
+                existingCreditSnap != null &&
+                existingCreditSnap.exists &&
+                existingCreditSnap.data()?['isPaid'] != true;
+
+            if (canMerge) {
+              final prev = existingCreditSnap!.data() ?? {};
+              final prevItems = <Map<String, dynamic>>[];
+              final rawPrev = prev['items'];
+              if (rawPrev is List) {
+                for (final entry in rawPrev) {
+                  if (entry is Map) {
+                    prevItems.add(Map<String, dynamic>.from(entry));
+                  }
+                }
+              }
+              final prevHistory = <Map<String, dynamic>>[];
+              final rawHistory = prev['history'];
+              if (rawHistory is List) {
+                for (final entry in rawHistory) {
+                  if (entry is Map) {
+                    prevHistory.add(Map<String, dynamic>.from(entry));
+                  }
+                }
+              }
+              prevHistory.add({
+                'amount': newAmount,
+                'date': credit['date'] ?? '',
+                'saleId': orderRef.id,
+                'items': newItems,
+              });
+              tx.update(existingCreditRef!, {
+                'amount': FieldValue.increment(newAmount),
+                'items': [...prevItems, ...newItems],
+                'history': prevHistory,
+                'date': credit['date'] ?? prev['date'] ?? '',
+                'customerName': name.isNotEmpty
+                    ? name
+                    : (prev['customerName'] ?? customerName),
+                'saleId': orderRef.id,
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
+            } else {
+              final creditRef = _credits.doc();
+              tx.set(creditRef, {
+                'creditId': creditRef.id,
+                'userId': credit['userId'] ?? resolvedUserId,
+                'customerName': name,
+                'amount': newAmount,
+                'date': credit['date'] ?? '',
+                'isPaid': false,
+                'saleId': orderRef.id,
+                if (newItems.isNotEmpty) 'items': newItems,
+                'history': [
+                  {
+                    'amount': newAmount,
+                    'date': credit['date'] ?? '',
+                    'saleId': orderRef.id,
+                    'items': newItems,
+                  },
+                ],
+                'createdAt': FieldValue.serverTimestamp(),
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
+            }
           }
 
           return orderRef.id;
@@ -423,7 +510,7 @@ class FirebaseService {
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> getCreditsStream(String userId) {
-    return _credits.where('userId', isEqualTo: userId).snapshots();
+    return _credits.where('userId', isEqualTo: userId).limit(100).snapshots();
   }
 
   Future<void> setCreditPaid(String creditId, bool isPaid) async {
@@ -433,19 +520,63 @@ class FirebaseService {
     });
   }
 
-  Stream<QuerySnapshot> getOrdersStream({
-    String? userId,
-    int limit = 50,
-  }) {
+  Stream<QuerySnapshot> getOrdersStream({String? userId, int limit = 50}) {
     final uid = userId ?? FirebaseAuth.instance.currentUser?.uid;
     if (uid == null || uid.isEmpty) {
       return const Stream.empty();
     }
 
     final capped = limit <= 0 ? 50 : limit;
-    return _orders
+    return _orders.where('userId', isEqualTo: uid).limit(capped).snapshots();
+  }
+
+  /// One-shot orders fetch (preferred over live listeners for dashboards).
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> fetchOrdersOnce({
+    String? userId,
+    int limit = 100,
+  }) async {
+    final uid = userId ?? FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) return const [];
+    final capped = limit <= 0 ? 100 : limit;
+    final snap = await _orders
         .where('userId', isEqualTo: uid)
         .limit(capped)
-        .snapshots();
+        .get();
+    return snap.docs;
+  }
+
+  /// One-shot unpaid/paid credits fetch with a hard limit.
+  Future<List<Map<String, dynamic>>> fetchCreditsOnce({
+    required String userId,
+    int limit = 100,
+  }) async {
+    if (userId.isEmpty) return const [];
+    final capped = limit <= 0 ? 100 : limit;
+    final snap = await _credits
+        .where('userId', isEqualTo: userId)
+        .limit(capped)
+        .get();
+    return snap.docs.map((doc) => doc.data()).toList(growable: false);
+  }
+
+  /// Find an existing unpaid credit for the same customer (trim + case-insensitive).
+  /// Single capped query — no live listener.
+  Future<String?> findUnpaidCreditIdForCustomer({
+    required String userId,
+    required String customerName,
+  }) async {
+    final key = customerName.trim().toLowerCase();
+    if (userId.isEmpty || key.isEmpty) return null;
+    final snap = await _credits
+        .where('userId', isEqualTo: userId)
+        .limit(100)
+        .get();
+    for (final doc in snap.docs) {
+      final data = doc.data();
+      if (data['isPaid'] == true) continue;
+      final name = (data['customerName'] ?? '').toString().trim().toLowerCase();
+      if (name == key) return doc.id;
+    }
+    return null;
   }
 }

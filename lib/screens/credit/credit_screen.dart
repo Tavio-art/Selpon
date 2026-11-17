@@ -3,8 +3,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+
 import '../../l10n/app_localizations.dart';
-import '../../services/notification_store.dart';
 import '../../services/settings_store.dart';
 import '../../theme/app_theme.dart';
 
@@ -70,9 +70,7 @@ class CreditItemModel {
     if (rawItems is List) {
       for (final entry in rawItems) {
         if (entry is Map) {
-          items.add(
-            CreditLineItem.fromMap(Map<String, dynamic>.from(entry)),
-          );
+          items.add(CreditLineItem.fromMap(Map<String, dynamic>.from(entry)));
         }
       }
     }
@@ -100,6 +98,8 @@ class CreditScreen extends StatefulWidget {
 }
 
 class _CreditScreenState extends State<CreditScreen> {
+  static const int _overdueDays = 7;
+
   SariColors get sari => context.sari;
   ColorScheme get scheme => Theme.of(context).colorScheme;
 
@@ -107,33 +107,11 @@ class _CreditScreenState extends State<CreditScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   _CreditFilter _filter = _CreditFilter.all;
-  bool _overdueChecked = false;
-
-  static const int _overdueDays = 7;
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
-  }
-
-  Future<void> _checkOverdue(List<CreditItemModel> credits) async {
-    if (_overdueChecked) return;
-    _overdueChecked = true;
-    final now = DateTime.now();
-    for (final c in credits) {
-      if (c.isPaid) continue;
-      final created = c.createdAt;
-      if (created == null) continue;
-      final days = now.difference(created).inDays;
-      if (days < _overdueDays) continue;
-      await NotificationStore.instance.addCreditOverdueAlert(
-        creditId: c.id,
-        customerName: c.customerName,
-        amount: c.amount,
-        daysOverdue: days,
-      );
-    }
   }
 
   void _showAddCreditModal() {
@@ -204,13 +182,22 @@ class _CreditScreenState extends State<CreditScreen> {
                 const SizedBox(height: 6),
                 TextField(
                   controller: nameController,
-                  style: GoogleFonts.outfit(color: scheme.onSurface, fontSize: 14),
+                  style: GoogleFonts.outfit(
+                    color: scheme.onSurface,
+                    fontSize: 14,
+                  ),
                   decoration: InputDecoration(
                     hintText: 'e.g. Maria Santos',
-                    hintStyle: GoogleFonts.outfit(color: sari.faintText, fontSize: 13),
+                    hintStyle: GoogleFonts.outfit(
+                      color: sari.faintText,
+                      fontSize: 13,
+                    ),
                     filled: true,
                     fillColor: sari.fieldFill,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(14),
                       borderSide: BorderSide(color: sari.cardBorder),
@@ -230,13 +217,22 @@ class _CreditScreenState extends State<CreditScreen> {
                 TextField(
                   controller: phoneController,
                   keyboardType: TextInputType.phone,
-                  style: GoogleFonts.outfit(color: scheme.onSurface, fontSize: 14),
+                  style: GoogleFonts.outfit(
+                    color: scheme.onSurface,
+                    fontSize: 14,
+                  ),
                   decoration: InputDecoration(
                     hintText: 'e.g. 09123456789',
-                    hintStyle: GoogleFonts.outfit(color: sari.faintText, fontSize: 13),
+                    hintStyle: GoogleFonts.outfit(
+                      color: sari.faintText,
+                      fontSize: 13,
+                    ),
                     filled: true,
                     fillColor: sari.fieldFill,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(14),
                       borderSide: BorderSide(color: sari.cardBorder),
@@ -255,14 +251,25 @@ class _CreditScreenState extends State<CreditScreen> {
                 const SizedBox(height: 6),
                 TextField(
                   controller: amountController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  style: GoogleFonts.outfit(color: scheme.onSurface, fontSize: 14),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  style: GoogleFonts.outfit(
+                    color: scheme.onSurface,
+                    fontSize: 14,
+                  ),
                   decoration: InputDecoration(
                     hintText: '0.00',
-                    hintStyle: GoogleFonts.outfit(color: sari.faintText, fontSize: 13),
+                    hintStyle: GoogleFonts.outfit(
+                      color: sari.faintText,
+                      fontSize: 13,
+                    ),
                     filled: true,
                     fillColor: sari.fieldFill,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(14),
                       borderSide: BorderSide(color: sari.cardBorder),
@@ -282,13 +289,22 @@ class _CreditScreenState extends State<CreditScreen> {
                 TextField(
                   controller: descController,
                   maxLines: 2,
-                  style: GoogleFonts.outfit(color: scheme.onSurface, fontSize: 14),
+                  style: GoogleFonts.outfit(
+                    color: scheme.onSurface,
+                    fontSize: 14,
+                  ),
                   decoration: InputDecoration(
                     hintText: 'e.g. 2 Cans Tuna, 1 Rice',
-                    hintStyle: GoogleFonts.outfit(color: sari.faintText, fontSize: 13),
+                    hintStyle: GoogleFonts.outfit(
+                      color: sari.faintText,
+                      fontSize: 13,
+                    ),
                     filled: true,
                     fillColor: sari.fieldFill,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(14),
                       borderSide: BorderSide(color: sari.cardBorder),
@@ -303,13 +319,16 @@ class _CreditScreenState extends State<CreditScreen> {
                     onPressed: () async {
                       final customerName = nameController.text.trim();
                       final phone = phoneController.text.trim();
-                      final amount = double.tryParse(amountController.text.trim()) ?? 0.0;
+                      final amount =
+                          double.tryParse(amountController.text.trim()) ?? 0.0;
                       final description = descController.text.trim();
 
                       if (customerName.isEmpty || amount <= 0) {
                         ScaffoldMessenger.of(dialogCtx).showSnackBar(
                           SnackBar(
-                            content: const Text('Please enter valid customer name and credit amount'),
+                            content: const Text(
+                              'Please enter valid customer name and credit amount',
+                            ),
                             backgroundColor: sari.danger,
                           ),
                         );
@@ -320,33 +339,112 @@ class _CreditScreenState extends State<CreditScreen> {
                       if (user == null) return;
 
                       try {
-                        final dateStr = DateFormat('MMM d, yyyy').format(DateTime.now());
-                        await _db.collection('credits').add({
-                          'userId': user.uid,
-                          'customerName': customerName,
-                          'phone': phone,
-                          'amount': amount,
-                          'description': description,
-                          'date': dateStr,
-                          'isPaid': false,
-                          'createdAt': FieldValue.serverTimestamp(),
-                          'items': description.isNotEmpty
-                              ? [
-                                  {
-                                    'name': description,
-                                    'quantity': 1,
-                                    'price': amount,
-                                    'subtotal': amount,
-                                  }
-                                ]
-                              : [],
-                        });
+                        final dateStr = DateFormat('MMM d, yyyy')
+                            .format(DateTime.now());
+                        final newItems = description.isNotEmpty
+                            ? [
+                                {
+                                  'name': description,
+                                  'quantity': 1,
+                                  'price': amount,
+                                  'subtotal': amount,
+                                },
+                              ]
+                            : <Map<String, dynamic>>[];
+                        final nameKey = customerName.toLowerCase();
+                        final existing = await _db
+                            .collection('credits')
+                            .where('userId', isEqualTo: user.uid)
+                            .limit(100)
+                            .get();
+                        QueryDocumentSnapshot<Map<String, dynamic>>? match;
+                        for (final doc in existing.docs) {
+                          final data = doc.data();
+                          if (data['isPaid'] == true) continue;
+                          final n = (data['customerName'] ?? '')
+                              .toString()
+                              .trim()
+                              .toLowerCase();
+                          if (n == nameKey) {
+                            match = doc;
+                            break;
+                          }
+                        }
+
+                        if (match != null) {
+                          await _db.runTransaction((tx) async {
+                            final snap = await tx.get(match!.reference);
+                            if (!snap.exists ||
+                                snap.data()?['isPaid'] == true) {
+                              throw StateError('Credit record changed');
+                            }
+                            final prev = snap.data() ?? {};
+                            final prevItems = <Map<String, dynamic>>[];
+                            final rawItems = prev['items'];
+                            if (rawItems is List) {
+                              for (final e in rawItems) {
+                                if (e is Map) {
+                                  prevItems.add(Map<String, dynamic>.from(e));
+                                }
+                              }
+                            }
+                            final prevHistory = <Map<String, dynamic>>[];
+                            final rawHistory = prev['history'];
+                            if (rawHistory is List) {
+                              for (final e in rawHistory) {
+                                if (e is Map) {
+                                  prevHistory.add(Map<String, dynamic>.from(e));
+                                }
+                              }
+                            }
+                            prevHistory.add({
+                              'amount': amount,
+                              'date': dateStr,
+                              'items': newItems,
+                              'description': description,
+                            });
+                            tx.update(match!.reference, {
+                              'amount': FieldValue.increment(amount),
+                              'items': [...prevItems, ...newItems],
+                              'history': prevHistory,
+                              'date': dateStr,
+                              'customerName': customerName,
+                              if (phone.isNotEmpty) 'phone': phone,
+                              if (description.isNotEmpty)
+                                'description': description,
+                              'updatedAt': FieldValue.serverTimestamp(),
+                            });
+                          });
+                        } else {
+                          await _db.collection('credits').add({
+                            'userId': user.uid,
+                            'customerName': customerName,
+                            'phone': phone,
+                            'amount': amount,
+                            'description': description,
+                            'date': dateStr,
+                            'isPaid': false,
+                            'createdAt': FieldValue.serverTimestamp(),
+                            'updatedAt': FieldValue.serverTimestamp(),
+                            'items': newItems,
+                            'history': [
+                              {
+                                'amount': amount,
+                                'date': dateStr,
+                                'items': newItems,
+                                'description': description,
+                              },
+                            ],
+                          });
+                        }
 
                         if (dialogCtx.mounted) Navigator.pop(dialogCtx);
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: const Text('Credit record saved successfully'),
+                              content: const Text(
+                                'Credit record saved successfully',
+                              ),
                               backgroundColor: sari.success,
                             ),
                           );
@@ -392,7 +490,10 @@ class _CreditScreenState extends State<CreditScreen> {
         backgroundColor: sari.cardSurface,
         title: Text(
           context.l10n.text('markAsPaidTitle'),
-          style: GoogleFonts.outfit(color: scheme.onSurface, fontWeight: FontWeight.bold),
+          style: GoogleFonts.outfit(
+            color: scheme.onSurface,
+            fontWeight: FontWeight.bold,
+          ),
         ),
         content: Text(
           context.l10n.text(
@@ -407,8 +508,10 @@ class _CreditScreenState extends State<CreditScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: Text(context.l10n.text('cancel'),
-                style: GoogleFonts.outfit(color: sari.mutedText)),
+            child: Text(
+              context.l10n.text('cancel'),
+              style: GoogleFonts.outfit(color: sari.mutedText),
+            ),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -416,7 +519,10 @@ class _CreditScreenState extends State<CreditScreen> {
               backgroundColor: scheme.primary,
               foregroundColor: scheme.onPrimary,
             ),
-            child: Text(context.l10n.text('markPaid'), style: GoogleFonts.outfit()),
+            child: Text(
+              context.l10n.text('markPaid'),
+              style: GoogleFonts.outfit(),
+            ),
           ),
         ],
       ),
@@ -440,7 +546,10 @@ class _CreditScreenState extends State<CreditScreen> {
           'total_amount': credit.amount,
           'created_at': FieldValue.serverTimestamp(),
         });
-      } catch (_) {}
+      } catch (e, st) {
+        debugPrint('[CreditScreen] transactions write failed: $e\n$st');
+        rethrow;
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -451,11 +560,9 @@ class _CreditScreenState extends State<CreditScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(context.l10n.text(
-                'failed',
-                values: {'error': '$e'},
-              )),
-              backgroundColor: sari.danger),
+            content: Text(context.l10n.text('failed', values: {'error': '$e'})),
+            backgroundColor: sari.danger,
+          ),
         );
       }
     }
@@ -729,9 +836,7 @@ class _CreditScreenState extends State<CreditScreen> {
       backgroundColor: sari.fieldFill,
       visualDensity: VisualDensity.compact,
       shape: StadiumBorder(
-        side: BorderSide(
-          color: selected ? sari.accentAmber : sari.cardBorder,
-        ),
+        side: BorderSide(color: selected ? sari.accentAmber : sari.cardBorder),
       ),
       labelStyle: GoogleFonts.outfit(
         color: selected ? sari.onAccentAmber : sari.mutedText,
@@ -747,9 +852,7 @@ class _CreditScreenState extends State<CreditScreen> {
       decoration: BoxDecoration(
         color: sari.cardSurface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: sari.accentAmber.withValues(alpha: 0.45),
-        ),
+        border: Border.all(color: sari.accentAmber.withValues(alpha: 0.45)),
       ),
       child: Row(
         children: [
@@ -859,32 +962,37 @@ class _CreditScreenState extends State<CreditScreen> {
                       );
                     }
 
-                    final credits = (snapshot.data?.docs ?? [])
-                        .map(CreditItemModel.fromFirestore)
-                        .toList()
-                      ..sort((a, b) => (b.createdAt ?? DateTime(1970))
-                          .compareTo(a.createdAt ?? DateTime(1970)));
+                    final credits =
+                        (snapshot.data?.docs ?? [])
+                            .map(CreditItemModel.fromFirestore)
+                            .toList()
+                          ..sort(
+                            (a, b) => (b.createdAt ?? DateTime(1970)).compareTo(
+                              a.createdAt ?? DateTime(1970),
+                            ),
+                          );
 
                     final filtered = credits.where((c) {
-                      final matchesSearch = _searchQuery.isEmpty ||
-                          c.customerName
-                              .toLowerCase()
-                              .contains(_searchQuery.toLowerCase()) ||
+                      final matchesSearch =
+                          _searchQuery.isEmpty ||
+                          c.customerName.toLowerCase().contains(
+                            _searchQuery.toLowerCase(),
+                          ) ||
                           c.phone.contains(_searchQuery);
-                      final matchesStatus = _filter == _CreditFilter.all ||
+                      final matchesStatus =
+                          _filter == _CreditFilter.all ||
                           (_filter == _CreditFilter.unpaid && !c.isPaid) ||
                           (_filter == _CreditFilter.paid && c.isPaid);
                       return matchesSearch && matchesStatus;
                     }).toList();
 
-                    final unpaidCredits =
-                        credits.where((c) => !c.isPaid).toList();
+                    final unpaidCredits = credits
+                        .where((c) => !c.isPaid)
+                        .toList();
                     final totalUnpaid = unpaidCredits.fold(
-                        0.0, (total, item) => total + item.amount);
-
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      _checkOverdue(credits);
-                    });
+                      0.0,
+                      (total, item) => total + item.amount,
+                    );
 
                     return ListenableBuilder(
                       listenable: SettingsStore.instance,
@@ -895,8 +1003,10 @@ class _CreditScreenState extends State<CreditScreen> {
                             Row(
                               children: [
                                 IconButton(
-                                  icon: Icon(Icons.arrow_back_rounded,
-                                      color: scheme.onSurface),
+                                  icon: Icon(
+                                    Icons.arrow_back_rounded,
+                                    color: scheme.onSurface,
+                                  ),
                                   onPressed: () => Navigator.of(context).pop(),
                                 ),
                                 Expanded(
@@ -921,18 +1031,27 @@ class _CreditScreenState extends State<CreditScreen> {
                               onChanged: (val) =>
                                   setState(() => _searchQuery = val.trim()),
                               style: GoogleFonts.outfit(
-                                  color: scheme.onSurface, fontSize: 13.5),
+                                color: scheme.onSurface,
+                                fontSize: 13.5,
+                              ),
                               decoration: InputDecoration(
-                                hintText:
-                                    context.l10n.text('creditSearchHint'),
+                                hintText: context.l10n.text('creditSearchHint'),
                                 hintStyle: GoogleFonts.outfit(
-                                    color: sari.faintText, fontSize: 12.5),
-                                prefixIcon: Icon(Icons.search,
-                                    color: sari.faintText, size: 18),
+                                  color: sari.faintText,
+                                  fontSize: 12.5,
+                                ),
+                                prefixIcon: Icon(
+                                  Icons.search,
+                                  color: sari.faintText,
+                                  size: 18,
+                                ),
                                 suffixIcon: _searchQuery.isNotEmpty
                                     ? IconButton(
-                                        icon: Icon(Icons.clear,
-                                            color: sari.mutedText, size: 18),
+                                        icon: Icon(
+                                          Icons.clear,
+                                          color: sari.mutedText,
+                                          size: 18,
+                                        ),
                                         onPressed: () {
                                           _searchController.clear();
                                           setState(() => _searchQuery = '');
@@ -993,19 +1112,21 @@ class _CreditScreenState extends State<CreditScreen> {
                                             MainAxisAlignment.center,
                                         children: [
                                           Icon(
-                                            Icons
-                                                .assignment_turned_in_outlined,
+                                            Icons.assignment_turned_in_outlined,
                                             size: 48,
-                                            color: sari.success
-                                                .withValues(alpha: 0.4),
+                                            color: sari.success.withValues(
+                                              alpha: 0.4,
+                                            ),
                                           ),
                                           const SizedBox(height: 12),
                                           Text(
                                             _searchQuery.isEmpty
-                                                ? context.l10n
-                                                    .text('noCreditsRecorded')
+                                                ? context.l10n.text(
+                                                    'noCreditsRecorded',
+                                                  )
                                                 : context.l10n.text(
-                                                    'noMatchingCustomers'),
+                                                    'noMatchingCustomers',
+                                                  ),
                                             style: GoogleFonts.outfit(
                                               color: sari.mutedText,
                                               fontSize: 14,
@@ -1016,8 +1137,9 @@ class _CreditScreenState extends State<CreditScreen> {
                                     )
                                   : ListView.separated(
                                       physics: const BouncingScrollPhysics(),
-                                      padding:
-                                          const EdgeInsets.only(bottom: 80),
+                                      padding: const EdgeInsets.only(
+                                        bottom: 80,
+                                      ),
                                       itemCount: filtered.length,
                                       separatorBuilder: (_, __) =>
                                           const SizedBox(height: 8),

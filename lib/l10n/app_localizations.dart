@@ -32,10 +32,8 @@ class AppLocalizations {
       case 'light':
         return text('themeLight');
       case 'dark':
-        return text('themeDark');
-      case 'system':
       default:
-        return text('themeSystem');
+        return text('themeDark');
     }
   }
 
@@ -63,6 +61,7 @@ class AppLocalizations {
       'navHome': 'Home',
       'navInventory': 'Inventory',
       'navScan': 'Scan',
+      'navDashboard': 'Dashboard',
       'navNotifications': 'Notifications',
       'navNotif': 'Notif',
       'navProfile': 'Profile',
@@ -105,9 +104,8 @@ class AppLocalizations {
       'languageTagalog': 'Tagalog',
       'appearanceSection': 'APPEARANCE',
       'appearance': 'Appearance',
-      'appearanceSubtitle': 'Light, dark, or match system',
+      'appearanceSubtitle': 'Light or dark',
       'selectAppearance': 'Select appearance',
-      'themeSystem': 'System default',
       'themeLight': 'Light',
       'themeDark': 'Dark',
       'themeDarkCurrent': 'Dark (current look)',
@@ -211,6 +209,10 @@ class AppLocalizations {
       'lowStockStat': 'Low Stock',
       'bestSellersStat': 'Best Sellers',
       'outOfStockStat': 'Out of Stock',
+      'inventoryValueStat': 'Inventory Value',
+      'noLowStockItems': 'No low stock items',
+      'noBestSellerItems': 'No best seller items',
+      'noOutOfStockItems': 'No out of stock items',
       'colItem': 'ITEM',
       'colCode': 'CODE',
       'colPrice': 'PRICE',
@@ -297,6 +299,7 @@ class AppLocalizations {
       'barcodeNotInInventory': 'Barcode "{barcode}" is not in inventory yet.',
       'autoFilledFromScan': 'Auto-filled from scan — no manual entry needed.',
       'qtyToAdd': 'Qty to add',
+      'takePhoto': 'Take photo',
       'attachPicture': 'Attach picture',
       'changePicture': 'Change picture',
       'quickAddToCart': 'Quick add to cart',
@@ -478,6 +481,7 @@ class AppLocalizations {
       'navHome': 'Tahanan',
       'navInventory': 'Imbentaryo',
       'navScan': 'I-scan',
+      'navDashboard': 'Dashboard',
       'navNotifications': 'Mga Abiso',
       'navNotif': 'Abiso',
       'navProfile': 'Profile',
@@ -520,9 +524,8 @@ class AppLocalizations {
       'languageTagalog': 'Tagalog',
       'appearanceSection': 'TEMA',
       'appearance': 'Tema',
-      'appearanceSubtitle': 'Maliwanag, madilim, o sundin ang system',
+      'appearanceSubtitle': 'Maliwanag o madilim',
       'selectAppearance': 'Pumili ng tema',
-      'themeSystem': 'Sundin ang system',
       'themeLight': 'Maliwanag',
       'themeDark': 'Madilim',
       'themeDarkCurrent': 'Madilim (kasalukuyang hitsura)',
@@ -631,6 +634,10 @@ class AppLocalizations {
       'lowStockStat': 'Mababang Stock',
       'bestSellersStat': 'Pinakamabenta',
       'outOfStockStat': 'Walang Stock',
+      'inventoryValueStat': 'Halaga ng Imbentaryo',
+      'noLowStockItems': 'Walang item na mababa ang stock',
+      'noBestSellerItems': 'Walang pinakamabentang item',
+      'noOutOfStockItems': 'Walang item na walang stock',
       'colItem': 'ITEM',
       'colCode': 'CODE',
       'colPrice': 'PRESYO',
@@ -722,6 +729,7 @@ class AppLocalizations {
       'autoFilledFromScan':
           'Awtomatikong nilagyan mula sa scan — hindi kailangang ilagay muli.',
       'qtyToAdd': 'Dami na idaragdag',
+      'takePhoto': 'Kumuha ng larawan',
       'attachPicture': 'Maglakip ng larawan',
       'changePicture': 'Palitan ang larawan',
       'quickAddToCart': 'Mabilisang idagdag sa cart',

@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Persisted store settings (currency, tax, exchange rate, notification toggles).
@@ -32,7 +33,7 @@ class SettingsStore extends ChangeNotifier {
   bool _lowStock = true;
   bool _twoFactor = false;
   String _languageCode = 'en';
-  ThemeMode _themeMode = ThemeMode.system;
+  ThemeMode _themeMode = ThemeMode.dark;
   bool _loaded = false;
 
   String get currencyCode => _currencyCode;
@@ -43,7 +44,8 @@ class SettingsStore extends ChangeNotifier {
   bool get lowStockEnabled => _lowStock;
   bool get twoFactorEnabled => _twoFactor;
   String get languageCode => _languageCode;
-  ThemeMode get themeMode => _themeMode;
+  ThemeMode get themeMode =>
+      _themeMode == ThemeMode.system ? ThemeMode.dark : _themeMode;
   bool get isLoaded => _loaded;
 
   String get currencySymbol {
@@ -101,7 +103,8 @@ class SettingsStore extends ChangeNotifier {
         return ThemeMode.dark;
       case 'system':
       default:
-        return ThemeMode.system;
+        // System default removed — treat legacy "system" as Dark.
+        return ThemeMode.dark;
     }
   }
 
@@ -110,9 +113,8 @@ class SettingsStore extends ChangeNotifier {
       case ThemeMode.light:
         return 'light';
       case ThemeMode.dark:
-        return 'dark';
       case ThemeMode.system:
-        return 'system';
+        return 'dark';
     }
   }
 
@@ -126,7 +128,41 @@ class SettingsStore extends ChangeNotifier {
   String formatMoney(num amountPhp, {int decimals = 2}) {
     final converted = convertFromPhp(amountPhp);
     final places = _currencyCode == 'JPY' ? 0 : decimals;
-    return '$currencySymbol${converted.toStringAsFixed(places)}';
+    final pattern = places == 0 ? '#,##0' : '#,##0.${'0' * places}';
+    final number = NumberFormat(pattern, 'en_US').format(converted);
+    return '$currencySymbol$number';
+  }
+
+  /// Compact axis / overflow-safe money (₱1.2K, ₱1.5M, ₱2B).
+  String formatMoneyCompact(num amountPhp, {int digits = 1}) {
+    final converted = convertFromPhp(amountPhp).abs();
+    final sign = amountPhp < 0 ? '-' : '';
+    String suffix = '';
+    double scaled = converted;
+    if (converted >= 1e12) {
+      scaled = converted / 1e12;
+      suffix = 'T';
+    } else if (converted >= 1e9) {
+      scaled = converted / 1e9;
+      suffix = 'B';
+    } else if (converted >= 1e6) {
+      scaled = converted / 1e6;
+      suffix = 'M';
+    } else if (converted >= 1e3) {
+      scaled = converted / 1e3;
+      suffix = 'K';
+    } else {
+      return '$sign$currencySymbol${converted.toStringAsFixed(0)}';
+    }
+    final rounded = scaled >= 100
+        ? scaled.toStringAsFixed(0)
+        : scaled.toStringAsFixed(digits);
+    final trimmed = rounded.contains('.')
+        ? rounded
+            .replaceFirst(RegExp(r'0+$'), '')
+            .replaceFirst(RegExp(r'\.$'), '')
+        : rounded;
+    return '$sign$currencySymbol$trimmed$suffix';
   }
 
   Future<void> load() async {
@@ -243,7 +279,7 @@ class SettingsStore extends ChangeNotifier {
   }
 
   Future<void> setThemeMode(ThemeMode mode) async {
-    _themeMode = mode;
+    _themeMode = mode == ThemeMode.system ? ThemeMode.dark : mode;
     notifyListeners();
     await _persist();
   }

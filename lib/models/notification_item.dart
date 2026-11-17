@@ -18,6 +18,7 @@ class NotificationItem {
   final NotificationType type;
   final bool unread;
   final DateTime? createdAt;
+  final String? remoteId;
 
   const NotificationItem({
     required this.title,
@@ -27,6 +28,7 @@ class NotificationItem {
     this.id = '',
     this.unread = true,
     this.createdAt,
+    this.remoteId,
   });
 
   bool get isRead => !unread;
@@ -39,6 +41,7 @@ class NotificationItem {
     NotificationType? type,
     bool? unread,
     DateTime? createdAt,
+    String? remoteId,
   }) {
     return NotificationItem(
       id: id ?? this.id,
@@ -48,6 +51,7 @@ class NotificationItem {
       type: type ?? this.type,
       unread: unread ?? this.unread,
       createdAt: createdAt ?? this.createdAt,
+      remoteId: remoteId ?? this.remoteId,
     );
   }
 
@@ -60,6 +64,7 @@ class NotificationItem {
         'unread': unread,
         'isRead': isRead,
         'createdAt': createdAt?.toIso8601String(),
+        if (remoteId != null && remoteId!.isNotEmpty) 'remoteId': remoteId,
       };
 
   Map<String, dynamic> toFirestore() => {
@@ -69,6 +74,7 @@ class NotificationItem {
         'isRead': isRead,
         'timeAgo': timeAgo,
         'createdAt': FieldValue.serverTimestamp(),
+        if (remoteId != null && remoteId!.isNotEmpty) 'remoteId': remoteId,
       };
 
   factory NotificationItem.fromMap(Map<String, dynamic> map) {
@@ -85,6 +91,7 @@ class NotificationItem {
       created = DateTime.tryParse(rawCreated);
     }
     final isRead = map['isRead'] == true || map['unread'] == false;
+    final remote = (map['remoteId'] ?? '').toString().trim();
     return NotificationItem(
       id: (map['id'] ?? '').toString(),
       title: (map['title'] ?? '').toString(),
@@ -93,6 +100,7 @@ class NotificationItem {
       type: type,
       unread: !isRead,
       createdAt: created,
+      remoteId: remote.isEmpty ? null : remote,
     );
   }
 

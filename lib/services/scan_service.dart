@@ -3,7 +3,6 @@ import 'package:flutter/widgets.dart';
 import '../l10n/app_localizations.dart';
 import '../models/product.dart';
 import 'firebase_service.dart';
-import 'notification_store.dart';
 import 'settings_store.dart';
 
 class ScanService {
@@ -118,19 +117,6 @@ class ScanService {
         addToExistingStock: addToExistingStock,
         catalogProductId: catalogProductId,
       );
-
-      await NotificationStore.instance.addInventoryEvent(
-        action: addToExistingStock ? 'added/updated' : 'registered',
-        productName: product.name,
-        stock: product.stock,
-      );
-
-      if (product.isLowStock || product.isOutOfStock) {
-        await NotificationStore.instance.addLowStockAlert(
-          productName: product.name,
-          stock: product.stock,
-        );
-      }
 
       _log('addToInventory OK stock=${product.stock}');
       return ScanResult(

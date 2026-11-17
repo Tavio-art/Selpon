@@ -25,6 +25,26 @@ StoreOrder order({
 void main() {
   final now = DateTime(2026, 9, 23, 12);
 
+  test('parses transaction fields in camelCase and snake_case', () {
+    final order = StoreOrder.fromFirestore('transaction-1', {
+      'customer_name': 'Walk-in',
+      'total_amount': 50,
+      'payment_method': 'Credit / Utang',
+      'created_at': '2026-09-23T09:00:00Z',
+      'status': 'completed',
+      'items': [
+        {'name': 'Coffee', 'quantity': 2, 'price': 25},
+      ],
+    });
+
+    expect(order.id, 'transaction-1');
+    expect(order.customerName, 'Walk-in');
+    expect(order.total, 50);
+    expect(order.paymentMethod, 'Credit / Utang');
+    expect(order.createdAt, DateTime.utc(2026, 9, 23, 9));
+    expect(order.itemCount, 2);
+  });
+
   test('aggregates today, VAT-adjusted sales, and Monday-to-Sunday values', () {
     final metrics = DashboardMetrics.fromOrders(
       now: now,

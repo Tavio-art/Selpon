@@ -3,16 +3,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../services/settings_store.dart';
 
-class ThemeController extends ChangeNotifier with WidgetsBindingObserver {
+class ThemeController extends ChangeNotifier {
   ThemeController._();
 
   static final ThemeController instance = ThemeController._();
 
   static const String _themeKey = 'theme_mode';
-  ThemeMode _themeMode = ThemeMode.system;
+  ThemeMode _themeMode = ThemeMode.dark;
 
-  ThemeMode get mode => _themeMode;
-  ThemeMode get themeMode => _themeMode;
+  ThemeMode get mode =>
+      _themeMode == ThemeMode.system ? ThemeMode.dark : _themeMode;
+  ThemeMode get themeMode => mode;
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -21,15 +22,18 @@ class ThemeController extends ChangeNotifier with WidgetsBindingObserver {
     if (_themeMode != SettingsStore.instance.themeMode) {
       await SettingsStore.instance.setThemeMode(_themeMode);
     }
-    WidgetsBinding.instance.addObserver(this);
+    // Persist migration if legacy "system" was stored.
+    if (raw == 'system') {
+      await prefs.setString(_themeKey, 'dark');
+    }
     notifyListeners();
   }
 
   Future<void> setThemeMode(ThemeMode mode) async {
-    _themeMode = mode;
-    await SettingsStore.instance.setThemeMode(mode);
+    _themeMode = mode == ThemeMode.system ? ThemeMode.dark : mode;
+    await SettingsStore.instance.setThemeMode(_themeMode);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_themeKey, _themeModeToString(mode));
+    await prefs.setString(_themeKey, _themeModeToString(_themeMode));
     notifyListeners();
   }
 
@@ -41,7 +45,8 @@ class ThemeController extends ChangeNotifier with WidgetsBindingObserver {
         return ThemeMode.dark;
       case 'system':
       default:
-        return ThemeMode.system;
+        // System default removed — treat missing/legacy as Dark.
+        return ThemeMode.dark;
     }
   }
 
@@ -50,22 +55,8 @@ class ThemeController extends ChangeNotifier with WidgetsBindingObserver {
       case ThemeMode.light:
         return 'light';
       case ThemeMode.dark:
-        return 'dark';
       case ThemeMode.system:
-        return 'system';
+        return 'dark';
     }
-  }
-
-  @override
-  void didChangePlatformBrightness() {
-    if (_themeMode == ThemeMode.system) {
-      notifyListeners();
-    }
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
   }
 }

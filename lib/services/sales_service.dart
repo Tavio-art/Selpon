@@ -4,7 +4,6 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'firebase_service.dart';
-import 'notification_store.dart';
 import 'settings_store.dart';
 
 /// Sales / checkout. Primary write goes to Firestore `orders/{orderId}`
@@ -73,6 +72,15 @@ class SalesService {
         })
         .toList();
 
+    // Merge into an existing unpaid credit for the same customer when present.
+    String? existingCreditId;
+    if (isCredit) {
+      existingCreditId = await _firebase.findUnpaidCreditIdForCustomer(
+        userId: user.uid,
+        customerName: customerName,
+      );
+    }
+
     // Order, stock, and credit (when applicable) commit in one Firestore txn.
     final orderId = await _firebase.checkoutOrder(
       items: items,
@@ -87,6 +95,8 @@ class SalesService {
               'amount': totalAmount,
               'date': creditDate,
               'items': creditItems,
+              if (existingCreditId != null)
+                'existingCreditId': existingCreditId,
             }
           : null,
     );
@@ -131,50 +141,7 @@ class SalesService {
       _log('RTDB mirror skipped/failed (check database.rules.json)', e);
     }
 
-    // In-app "Thank you" notification after successful checkout.
-    try {
-      await NotificationStore.instance.addCheckoutThankYou(
-        orderId: orderId,
-        total: totalAmount,
-        paymentMethod: paymentMethod,
-        customerName: customerName,
-      );
-      await NotificationStore.instance.addTransactionRecorded(
-        paymentMethod: paymentMethod,
-        total: totalAmount,
-        customerName: customerName,
-      );
-    } catch (e) {
-      _log('Notification add failed', e);
-    }
-
-    // Low-stock alerts for items that crossed the threshold after sale.
-    try {
-      await _notifyLowStock(items);
-    } catch (e) {
-      _log('Low-stock check failed', e);
-    }
-
     return orderId;
-  }
-
-  Future<void> _notifyLowStock(List<Map<String, dynamic>> items) async {
-    for (final raw in items) {
-      final barcode = (raw['barcode'] ?? raw['id'] ?? '').toString().trim();
-      if (barcode.isEmpty) continue;
-      try {
-        final product = await _firebase.getProductByBarcode(barcode);
-        if (product == null) continue;
-        if (product.isLowStock || product.isOutOfStock) {
-          await NotificationStore.instance.addLowStockAlert(
-            productName: product.name,
-            stock: product.stock,
-          );
-        }
-      } catch (e) {
-        _log('Low-stock lookup failed for $barcode', e);
-      }
-    }
   }
 
   Stream<DatabaseEvent> getSalesStream() {

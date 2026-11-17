@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_card.dart';
 import '../../core/widgets/app_snackbar.dart';
@@ -10,6 +11,7 @@ import '../../services/cart_store.dart';
 import '../../services/sales_service.dart';
 import '../../services/settings_store.dart';
 import '../credit/credit_screen.dart';
+import '../home/main_shell.dart';
 
 class CheckoutScreen extends StatefulWidget {
   final double totalAmount;
@@ -40,8 +42,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   Future<void> _confirmOrder() async {
     final isCredit = _selectedPaymentMethod == 'Credit / Utang';
-    final customerName =
-        isCredit ? _customerController.text.trim() : _selectedPaymentMethod;
+    final customerName = isCredit
+        ? _customerController.text.trim()
+        : _selectedPaymentMethod;
 
     if (isCredit && _customerController.text.trim().isEmpty) {
       setState(() {
@@ -59,35 +62,40 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       for (final item in CartStore.instance.items) {
         if (item.skipInventory) continue;
         if (item.quantity > item.product.stock) {
-          throw StateError(context.l10n.text(
-            'checkoutInsufficientStock',
-            values: {
-              'name': item.product.name,
-              'need': '${item.quantity}',
-              'have': '${item.product.stock}',
-            },
-          ));
+          throw StateError(
+            context.l10n.text(
+              'checkoutInsufficientStock',
+              values: {
+                'name': item.product.name,
+                'need': '${item.quantity}',
+                'have': '${item.product.stock}',
+              },
+            ),
+          );
         }
       }
 
       final itemsMap = CartStore.instance.items
-          .map((item) => {
-                'id': item.product.barcode.isNotEmpty
-                    ? item.product.barcode
-                    : item.product.id,
-                'inventoryId': item.product.catalogProductId.isNotEmpty
-                    ? item.product.catalogProductId
-                    : item.product.id,
-                if (item.product.catalogProductId.isNotEmpty)
-                  'catalogProductId': item.product.catalogProductId,
-                'name': item.product.name,
-                'barcode': item.product.barcode.isNotEmpty
-                    ? item.product.barcode
-                    : item.product.id,
-                'price': item.product.price,
-                'quantity': item.quantity,
-                if (item.skipInventory) 'skipInventory': true,
-              })
+          .map(
+            (item) => {
+              'id': item.product.barcode.isNotEmpty
+                  ? item.product.barcode
+                  : item.product.id,
+              'inventoryId': item.product.catalogProductId.isNotEmpty
+                  ? item.product.catalogProductId
+                  : item.product.id,
+              if (item.product.catalogProductId.isNotEmpty)
+                'catalogProductId': item.product.catalogProductId,
+              'name': item.product.name,
+              'category': item.product.category,
+              'barcode': item.product.barcode.isNotEmpty
+                  ? item.product.barcode
+                  : item.product.id,
+              'price': item.product.price,
+              'quantity': item.quantity,
+              if (item.skipInventory) 'skipInventory': true,
+            },
+          )
           .toList();
 
       final orderId = await _salesService.recordSale(
@@ -105,7 +113,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
       if (isCredit) {
         if (!mounted) return;
-        await showDialog<void>(
+        final next = await showDialog<String>(
           context: context,
           barrierDismissible: false,
           builder: (dialogContext) {
@@ -147,10 +155,21 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   ),
                 ],
               ),
+              actionsAlignment: MainAxisAlignment.center,
               actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop('home'),
+                  child: Text(
+                    'Back to Home',
+                    style: GoogleFonts.outfit(
+                      color: dialogSari.mutedText,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
                 PrimaryButton(
                   label: 'View Credit / Utang',
-                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  onPressed: () => Navigator.of(dialogContext).pop('credit'),
                 ),
               ],
             );
@@ -158,6 +177,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         );
 
         if (!mounted) return;
+        // Cart already cleared above; never leave the user stuck on Checkout.
+        if (next == 'home') {
+          Navigator.of(context).popUntil((route) => route.isFirst);
+          MainShell.requestTab?.call(MainShell.homeTab);
+          return;
+        }
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const CreditScreen()),
         );
@@ -274,8 +299,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     style: GoogleFonts.outfit(
                       color: scheme.onSurface,
                       fontSize: 15,
-                      fontWeight:
-                          isSelected ? FontWeight.w700 : FontWeight.w500,
+                      fontWeight: isSelected
+                          ? FontWeight.w700
+                          : FontWeight.w500,
                     ),
                   ),
                 ),
@@ -301,8 +327,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final sari = context.sari;
     final isCredit = _selectedPaymentMethod == 'Credit / Utang';
 
+    final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
+      resizeToAvoidBottomInset: true,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -334,141 +363,174 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               ),
               const SizedBox(height: 18),
               Expanded(
-                child: ListView(
-                  physics: const BouncingScrollPhysics(),
-                  children: [
-                    AppCard(
-                      padding: const EdgeInsets.all(18),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            context.l10n.text('orderSummary').toUpperCase(),
-                            style: GoogleFonts.outfit(
-                              color: sari.mutedText,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.8,
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    return SingleChildScrollView(
+                      physics: const BouncingScrollPhysics(),
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      padding: EdgeInsets.only(bottom: keyboard > 0 ? 12 : 0),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          minHeight: constraints.maxHeight,
+                        ),
+                        child: IntrinsicHeight(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                context.l10n.text('totalItemsColon'),
-                                style: GoogleFonts.outfit(
-                                  color: sari.bodyText,
-                                  fontSize: 14,
+                              AppCard(
+                                padding: const EdgeInsets.all(18),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      context.l10n
+                                          .text('orderSummary')
+                                          .toUpperCase(),
+                                      style: GoogleFonts.outfit(
+                                        color: sari.mutedText,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        letterSpacing: 0.8,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 14),
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text(
+                                          context.l10n.text('totalItemsColon'),
+                                          style: GoogleFonts.outfit(
+                                            color: sari.bodyText,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                        Text(
+                                          context.l10n.text(
+                                            'pcs',
+                                            values: {
+                                              'count': '${widget.itemCount}',
+                                            },
+                                          ),
+                                          style: GoogleFonts.outfit(
+                                            color: scheme.onSurface,
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 15,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text(
+                                          context.l10n.text('totalPayable'),
+                                          style: GoogleFonts.outfit(
+                                            color: sari.bodyText,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                        Text(
+                                          SettingsStore.instance.formatMoney(
+                                            widget.totalAmount,
+                                          ),
+                                          style: GoogleFonts.outfit(
+                                            color: sari.accentAmber,
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
                                 ),
                               ),
-                              Text(
-                                context.l10n.text(
-                                  'pcs',
-                                  values: {'count': '${widget.itemCount}'},
+                              const SizedBox(height: 22),
+                              if (isCredit) ...[
+                                Row(
+                                  children: [
+                                    Text(
+                                      context.l10n.text('customerName'),
+                                      style: GoogleFonts.outfit(
+                                        color: scheme.onSurface,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    Text(
+                                      context.l10n.text('customerRequired'),
+                                      style: GoogleFonts.outfit(
+                                        color: sari.danger,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
                                 ),
+                                const SizedBox(height: 8),
+                                AppTextField(
+                                  controller: _customerController,
+                                  hintText: context.l10n.text(
+                                    'borrowerNameHint',
+                                  ),
+                                  prefixIcon: Icons.person_outline_rounded,
+                                  onChanged: (_) {
+                                    if (_errorMessage != null) {
+                                      setState(() => _errorMessage = null);
+                                    }
+                                  },
+                                ),
+                                if (_errorMessage != null) ...[
+                                  const SizedBox(height: 4),
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 14),
+                                    child: Text(
+                                      _errorMessage!,
+                                      style: GoogleFonts.outfit(
+                                        color: sari.danger,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 20),
+                              ],
+                              Text(
+                                context.l10n.text('paymentMethod'),
                                 style: GoogleFonts.outfit(
                                   color: scheme.onSurface,
-                                  fontWeight: FontWeight.w700,
                                   fontSize: 15,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
+                              const SizedBox(height: 12),
+                              _paymentOption('Cash', Icons.payments_outlined),
+                              _paymentOption(
+                                'Credit / Utang',
+                                Icons.assignment_outlined,
+                              ),
+                              const Spacer(),
+                              const SizedBox(height: 16),
+                              PrimaryButton(
+                                label: isCredit
+                                    ? 'Save Utang & View List'
+                                    : 'Complete Order',
+                                isLoading: _saving,
+                                onPressed: _confirmOrder,
+                              ),
+                              const SizedBox(height: 18),
                             ],
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                context.l10n.text('totalPayable'),
-                                style: GoogleFonts.outfit(
-                                  color: sari.bodyText,
-                                  fontSize: 14,
-                                ),
-                              ),
-                              Text(
-                                SettingsStore.instance
-                                    .formatMoney(widget.totalAmount),
-                                style: GoogleFonts.outfit(
-                                  color: sari.accentAmber,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 22),
-                    if (isCredit) ...[
-                      Row(
-                        children: [
-                          Text(
-                            context.l10n.text('customerName'),
-                            style: GoogleFonts.outfit(
-                              color: scheme.onSurface,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          Text(
-                            context.l10n.text('customerRequired'),
-                            style: GoogleFonts.outfit(
-                              color: sari.danger,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      AppTextField(
-                        controller: _customerController,
-                        hintText: context.l10n.text('borrowerNameHint'),
-                        prefixIcon: Icons.person_outline_rounded,
-                        onChanged: (_) {
-                          if (_errorMessage != null) {
-                            setState(() => _errorMessage = null);
-                          }
-                        },
-                      ),
-                      if (_errorMessage != null) ...[
-                        const SizedBox(height: 4),
-                        Padding(
-                          padding: const EdgeInsets.only(left: 14),
-                          child: Text(
-                            _errorMessage!,
-                            style: GoogleFonts.outfit(
-                              color: sari.danger,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
                           ),
                         ),
-                      ],
-                      const SizedBox(height: 20),
-                    ],
-                    Text(
-                      context.l10n.text('paymentMethod'),
-                      style: GoogleFonts.outfit(
-                        color: scheme.onSurface,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    _paymentOption('Cash', Icons.payments_outlined),
-                    _paymentOption('Credit / Utang', Icons.assignment_outlined),
-                  ],
+                    );
+                  },
                 ),
               ),
-              PrimaryButton(
-                label: isCredit ? 'Save Utang & View List' : 'Complete Order',
-                isLoading: _saving,
-                onPressed: _confirmOrder,
-              ),
-              const SizedBox(height: 18),
             ],
           ),
         ),

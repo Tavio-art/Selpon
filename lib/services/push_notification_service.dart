@@ -11,7 +11,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../firebase_options.dart';
 import '../models/notification_item.dart';
-import 'notification_store.dart';
 import 'settings_store.dart';
 
 /// Handles OS notification permission, FCM token registration, and local
@@ -29,7 +28,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     }
   } catch (e) {
     debugPrint('[FCM] background Firebase init: $e');
+    return;
   }
+
   debugPrint('[FCM] background message: ${message.messageId}');
 }
 
@@ -48,7 +49,6 @@ class PushNotificationService {
   bool _initialized = false;
   String? _fcmToken;
   StreamSubscription<String>? _tokenRefreshSub;
-  final Set<String> _ingestedRemoteIds = {};
 
   /// Fired when the user opens a system / local notification.
   void Function(NotificationType type)? onNotificationOpened;
@@ -106,7 +106,6 @@ class PushNotificationService {
     // Cold-start from a notification tap.
     final initial = await _messaging.getInitialMessage();
     if (initial != null) {
-      await _ingestRemoteMessage(initial, markUnread: false);
       _queueOpen(_typeFromData(initial.data));
     }
 
@@ -284,7 +283,6 @@ class PushNotificationService {
   }
 
   Future<void> _onForegroundMessage(RemoteMessage message) async {
-    await _ingestRemoteMessage(message, markUnread: true);
     final n = message.notification;
     if (n != null) {
       await showLocal(
@@ -296,7 +294,6 @@ class PushNotificationService {
   }
 
   Future<void> _onMessageOpened(RemoteMessage message) async {
-    await _ingestRemoteMessage(message, markUnread: false);
     _queueOpen(_typeFromData(message.data));
   }
 
@@ -319,54 +316,4 @@ class PushNotificationService {
     );
   }
 
-  Future<void> _ingestRemoteMessage(
-    RemoteMessage message, {
-    required bool markUnread,
-  }) async {
-    final remoteId = message.messageId;
-    if (remoteId != null && remoteId.isNotEmpty) {
-      if (_ingestedRemoteIds.contains(remoteId)) return;
-      _ingestedRemoteIds.add(remoteId);
-      if (_ingestedRemoteIds.length > 50) {
-        _ingestedRemoteIds.remove(_ingestedRemoteIds.first);
-      }
-    }
-
-    final title = message.notification?.title ??
-        message.data['title']?.toString() ??
-        'Notification';
-    final body =
-        message.notification?.body ?? message.data['body']?.toString() ?? '';
-    final type = _typeFromData(message.data);
-
-    // Avoid duplicating an identical unread item already in the store.
-    final store = NotificationStore.instance;
-    final already = store.items.any(
-      (n) =>
-          n.title == title &&
-          n.subtitle == (body.isEmpty ? 'Tap to view details' : body) &&
-          n.unread,
-    );
-    if (already) {
-      if (!markUnread) {
-        final match = store.items.firstWhere(
-          (n) => n.title == title && n.unread,
-          orElse: () => store.items.first,
-        );
-        if (match.id.isNotEmpty) await store.markAsRead(match.id);
-      }
-      return;
-    }
-
-    await store.add(
-      title: title,
-      subtitle: body.isEmpty ? 'Tap to view details' : body,
-      type: type,
-      showSystemBanner: false,
-    );
-
-    if (!markUnread && store.items.isNotEmpty) {
-      await store.markAsRead(store.items.first.id);
-    }
-  }
 }
