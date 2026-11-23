@@ -416,9 +416,9 @@ class DashboardScreen extends StatelessWidget {
                                     ),
                                   ),
                                   const SizedBox(height: 24),
-                                  _Reveal(
-                                    delay: const Duration(milliseconds: 380),
-                                    child: const _SectionTitle(
+                                  const _Reveal(
+                                    delay: Duration(milliseconds: 380),
+                                    child: _SectionTitle(
                                       title: 'Top Selling Products',
                                     ),
                                   ),

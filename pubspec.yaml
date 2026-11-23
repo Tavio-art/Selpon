@@ -69,12 +69,15 @@ flutter_launcher_icons:
 
 flutter_native_splash:
   color: "#0E5A3A"
-  image: assets/images/sari_logo.png
+  color_dark: "#0E5A3A"
+  image: assets/images/sari_splash_logo.png
   android: true
   ios: true
+  web: false
   android_12:
     color: "#0E5A3A"
-    image: assets/images/sari_logo.png
+    color_dark: "#0E5A3A"
+    image: assets/images/sari_splash_logo.png
 
 flutter:
   uses-material-design: true

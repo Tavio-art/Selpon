@@ -1,60 +1,15 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:intl/date_symbol_data_local.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'core/theme/app_colors.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/theme_controller.dart';
-import 'firebase_options.dart';
 import 'l10n/app_localizations.dart';
 import 'screens/splash_screen.dart';
-import 'services/notification_store.dart';
-import 'services/push_notification_service.dart';
 import 'services/settings_store.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  await initializeDateFormatting();
-
-  try {
-    if (Firebase.apps.isEmpty) {
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
-    }
-  } catch (e) {
-    debugPrint("Firebase already initialized: $e");
-  }
-
-  try {
-    FirebaseFirestore.instance.settings = const Settings(
-      persistenceEnabled: true,
-      cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
-    );
-  } catch (e) {
-    debugPrint('Firestore persistence skipped: $e');
-  }
-
-  if (kIsWeb) {
-    await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
-  }
-
-  await Future.wait([
-    SettingsStore.instance.load(),
-    NotificationStore.instance.load(),
-    ThemeController.instance.load(),
-  ]);
-
-  try {
-    await PushNotificationService.instance.initialize();
-  } catch (e) {
-    debugPrint('Push init skipped: $e');
-  }
-
   runApp(const SariApp());
 }
 

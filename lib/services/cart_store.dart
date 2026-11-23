@@ -16,9 +16,10 @@ class CartStore extends ChangeNotifier {
 
   List<CartItem> get items => List.unmodifiable(_items);
 
-  int get itemCount => _items.fold(0, (sum, item) => sum + item.quantity);
+  int get itemCount => _items.fold(0, (total, item) => total + item.quantity);
 
-  double get subtotal => _items.fold(0.0, (sum, item) => sum + item.totalPrice);
+  double get subtotal =>
+      _items.fold(0.0, (total, item) => total + item.totalPrice);
 
   bool get isEmpty => _items.isEmpty;
 

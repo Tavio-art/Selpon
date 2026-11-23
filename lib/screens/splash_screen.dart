@@ -1,13 +1,19 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
+import '../firebase_options.dart';
 import '../core/widgets/sari_storefront.dart';
 import '../services/notification_store.dart';
 import '../services/push_notification_service.dart';
 import '../services/settings_store.dart';
+import '../core/theme/theme_controller.dart';
 import '../services/user_profile_store.dart';
 import 'auth/login_screen.dart';
 import 'home/main_shell.dart';
@@ -21,13 +27,13 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen>
     with SingleTickerProviderStateMixin {
+  static const _minimumSplashDuration = Duration(milliseconds: 2500);
+
   late final AnimationController _c;
-  Timer? _pulseTimer;
-  double _pulseT = 0;
+  String? _startupError;
 
   late final Animation<Offset> _awningSlide;
   late final Animation<double> _logoScale;
-  late final Animation<double> _logoFade;
   late final Animation<double> _titleFade;
   late final Animation<Offset> _titleSlide;
   late final Animation<double> _tagFade;
@@ -41,7 +47,7 @@ class _SplashScreenState extends State<SplashScreen>
 
     _c = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2500),
+      duration: const Duration(milliseconds: 800),
     );
 
     _awningSlide = Tween<Offset>(
@@ -54,7 +60,7 @@ class _SplashScreenState extends State<SplashScreen>
 
     _logoScale = TweenSequence<double>([
       TweenSequenceItem(
-        tween: Tween(begin: 0.5, end: 1.07)
+        tween: Tween(begin: 0.9, end: 1.07)
             .chain(CurveTween(curve: Curves.easeOutCubic)),
         weight: 70,
       ),
@@ -67,11 +73,6 @@ class _SplashScreenState extends State<SplashScreen>
       parent: _c,
       curve: const Interval(0.20, 0.72, curve: Curves.linear),
     ));
-
-    _logoFade = CurvedAnimation(
-      parent: _c,
-      curve: const Interval(0.20, 0.48, curve: Curves.easeOut),
-    );
 
     _titleFade = CurvedAnimation(
       parent: _c,
@@ -113,29 +114,17 @@ class _SplashScreenState extends State<SplashScreen>
       if (!mounted) return;
       if (sariAnimationsEnabled(context)) {
         _c.forward();
-        _pulseTimer = Timer.periodic(const Duration(milliseconds: 40), (_) {
-          if (!mounted) return;
-          setState(() => _pulseT = (_pulseT + 0.035) % 1.0);
-        });
       } else {
         _c.value = 1;
       }
+      unawaited(_openNextScreen());
     });
-
-    unawaited(_openNextScreen());
   }
 
   Future<User?> _restoredUser() async {
     final currentUser = FirebaseAuth.instance.currentUser;
     if (currentUser != null) return currentUser;
-
-    try {
-      return await FirebaseAuth.instance.authStateChanges().first.timeout(
-            const Duration(seconds: 2),
-          );
-    } catch (_) {
-      return FirebaseAuth.instance.currentUser;
-    }
+    return FirebaseAuth.instance.authStateChanges().first;
   }
 
   Future<void> _runStartupTask(
@@ -150,46 +139,60 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> _openNextScreen() async {
-    final userFuture = _restoredUser();
+    final minimumDisplay = Future<void>.delayed(_minimumSplashDuration);
+    late final User? user;
+    try {
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+      }
 
-    await Future<void>.delayed(const Duration(milliseconds: 2500));
-    final user = await userFuture;
+      try {
+        FirebaseFirestore.instance.settings = const Settings(
+          persistenceEnabled: true,
+          cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+        );
+      } catch (error) {
+        debugPrint('Firestore persistence skipped: $error');
+      }
 
+      if (kIsWeb) {
+        await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
+      }
+
+      final userFuture = _restoredUser();
+      await Future.wait<void>([
+        _runStartupTask('local settings', SettingsStore.instance.loadLocal),
+        _runStartupTask('local theme', ThemeController.instance.load),
+        _runStartupTask('date formatting', initializeDateFormatting),
+      ]);
+      user = await userFuture;
+      await _runStartupTask(
+        'local notifications',
+        NotificationStore.instance.load,
+      );
+    } catch (error, stackTrace) {
+      debugPrint('App startup failed: $error\n$stackTrace');
+      await minimumDisplay;
+      if (mounted) {
+        setState(
+          () => _startupError = 'Unable to start the app. Please retry.',
+        );
+      }
+      return;
+    }
+
+    await minimumDisplay;
     if (!mounted) return;
 
-    if (user != null) {
-      await Future.wait<void>([
-        _runStartupTask(
-          'settings refresh',
-          () => SettingsStore.instance.reloadForCurrentUser(),
-        ),
-        _runStartupTask(
-          'notification refresh',
-          () => NotificationStore.instance.reloadForCurrentUser(),
-        ),
-        _runStartupTask(
-          'profile refresh',
-          () => UserProfileStore.instance.reload(),
-        ),
-        _runStartupTask(
-          'push token binding',
-          () => PushNotificationService.instance.bindTokenToCurrentUser(),
-        ),
-      ]);
-    } else {
+    if (user == null) {
       UserProfileStore.instance.clear();
     }
 
-    await _runStartupTask(
-      'notification permission',
-      () => PushNotificationService.instance.requestPermissionIfNeeded(),
-    );
-
-    if (!mounted) return;
-
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
-        transitionDuration: const Duration(milliseconds: 400),
+        transitionDuration: const Duration(milliseconds: 300),
         pageBuilder: (_, animation, __) {
           return user != null ? const MainShell() : const LoginScreen();
         },
@@ -198,19 +201,51 @@ class _SplashScreenState extends State<SplashScreen>
         },
       ),
     );
+
+    unawaited(
+      _runStartupTask(
+        'settings refresh',
+        SettingsStore.instance.refreshFromFirestore,
+      ),
+    );
+    if (user != null) {
+      unawaited(
+        _runStartupTask('profile refresh', UserProfileStore.instance.reload),
+      );
+    }
+    unawaited(
+      _runStartupTask('push startup', () async {
+        final push = PushNotificationService.instance;
+        await push.initialize();
+        if (user != null) await push.bindTokenToCurrentUser();
+        await push.requestPermissionIfNeeded();
+      }),
+    );
   }
 
   @override
   void dispose() {
-    _pulseTimer?.cancel();
     _c.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_startupError != null) {
+      return Scaffold(
+        backgroundColor: SariBrandDecor.splashGreen,
+        body: Center(
+          child: Text(
+            _startupError!,
+            style: const TextStyle(color: SariBrandDecor.onGreen),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
-      backgroundColor: SariBrandDecor.headerGreen,
+      backgroundColor: SariBrandDecor.splashGreen,
       body: AnimatedBuilder(
         animation: _c,
         builder: (context, _) {
@@ -229,11 +264,13 @@ class _SplashScreenState extends State<SplashScreen>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    FadeTransition(
-                      opacity: _logoFade,
-                      child: ScaleTransition(
-                        scale: _logoScale,
-                        child: const SariLogo(size: 140),
+                    ScaleTransition(
+                      scale: _logoScale,
+                      child: Image.asset(
+                        'assets/images/sari_splash_logo.png',
+                        width: 200,
+                        height: 200,
+                        fit: BoxFit.contain,
                       ),
                     ),
                     const SizedBox(height: 18),
@@ -260,6 +297,17 @@ class _SplashScreenState extends State<SplashScreen>
                         ),
                       ),
                     ),
+                    const SizedBox(height: 24),
+                    const SizedBox(
+                      width: 28,
+                      height: 28,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          SariBrandDecor.onGreen,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -274,7 +322,7 @@ class _SplashScreenState extends State<SplashScreen>
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        SariPulseDots(t: _pulseT),
+                        SariPulseDots(t: _c.value),
                         const SizedBox(height: 10),
                         const SariShelf(height: 58),
                       ],

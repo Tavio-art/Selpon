@@ -116,6 +116,12 @@ class SalesService {
                   'id': item['id'] ?? item['barcode'],
                   'barcode': item['barcode'] ?? item['id'],
                   'name': item['name'],
+                  'category': (item['category'] ??
+                          item['categoryName'] ??
+                          item['productCategory'] ??
+                          '')
+                      .toString()
+                      .trim(),
                   'price': item['price'],
                   'quantity': item['quantity'],
                   'subtotal':

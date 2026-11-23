@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sari_app/models/order.dart';
+import 'package:sari_app/models/product.dart';
 import 'package:sari_app/screens/dashboard/dashboard_metrics.dart';
 
 StoreOrder order({
@@ -132,5 +133,69 @@ void main() {
     ]);
 
     expect(total, 125.5);
+  });
+
+  test('uses stored or looked-up categories and preserves custom names', () {
+    final sales = DashboardMetrics.categoryRevenue(
+      orders: [
+        order(
+          id: 'legacy',
+          total: 35,
+          createdAt: now,
+          items: [
+            {'barcode': '123', 'quantity': 2, 'price': 10},
+            {'categoryName': 'Local Special', 'quantity': 1, 'price': 5},
+            {'id': '123', 'category': 'Other', 'quantity': 1, 'price': 10},
+          ],
+        ),
+      ],
+      products: [
+        Product.fromMap('product-1', {
+          'barcode': '123',
+          'categoryName': 'Frozen Foods',
+        }),
+      ],
+    );
+
+    expect(sales, {'Frozen Foods': 30, 'Local Special': 5});
+  });
+
+  test('rounded category percentages sum to 100', () {
+    final percentages = DashboardMetrics.percentageShares([1, 1, 1]);
+
+    expect(percentages, [34, 33, 33]);
+    expect(percentages.reduce((total, value) => total + value), 100);
+  });
+
+  test('excludes cancelled and refunded orders from revenue', () {
+    final cancelled = StoreOrder.fromFirestore('cancelled', {
+      'status': 'cancelled',
+      'totalAmount': 100,
+    });
+    final refunded = StoreOrder.fromFirestore('refunded', {
+      'status': 'refunded',
+      'totalAmount': 50,
+    });
+
+    expect(
+      DashboardMetrics.totalRevenue([
+        order(id: 'sale', total: 25.55, createdAt: now),
+        cancelled,
+        refunded,
+      ]),
+      25.55,
+    );
+    expect(DashboardMetrics.estimatedProfit(25.55), 5.11);
+  });
+
+  test('computes calendar-year query bounds in Asia/Manila', () {
+    expect(
+      DashboardMetrics.manilaYearStartUtc(2026),
+      DateTime.utc(2025, 12, 31, 16),
+    );
+    expect(
+      DashboardMetrics.manilaNextYearStartUtc(2026),
+      DateTime.utc(2026, 12, 31, 16),
+    );
   });
 }

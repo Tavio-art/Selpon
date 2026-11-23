@@ -407,7 +407,7 @@ class FirebaseService {
                 existingCreditSnap.data()?['isPaid'] != true;
 
             if (canMerge) {
-              final prev = existingCreditSnap!.data() ?? {};
+              final prev = existingCreditSnap.data() ?? {};
               final prevItems = <Map<String, dynamic>>[];
               final rawPrev = prev['items'];
               if (rawPrev is List) {
@@ -432,7 +432,7 @@ class FirebaseService {
                 'saleId': orderRef.id,
                 'items': newItems,
               });
-              tx.update(existingCreditRef!, {
+              tx.update(existingCreditRef, {
                 'amount': FieldValue.increment(newAmount),
                 'items': [...prevItems, ...newItems],
                 'history': prevHistory,
