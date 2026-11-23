@@ -24,6 +24,7 @@ class StoreOrder {
   final String paymentMethod;
   final DateTime? createdAt;
   final List<Map<String, dynamic>> items;
+  final bool isVoided;
 
   const StoreOrder({
     required this.id,
@@ -34,6 +35,7 @@ class StoreOrder {
     this.paymentMethod = '',
     this.createdAt,
     this.items = const [],
+    this.isVoided = false,
   });
 
   factory StoreOrder.fromFirestore(String id, Map<String, dynamic> data) {
@@ -108,6 +110,10 @@ class StoreOrder {
           .toString(),
       createdAt: createdAt,
       items: items,
+      isVoided:
+          statusRaw.contains('cancel') ||
+          statusRaw.contains('refund') ||
+          statusRaw == 'void',
     );
   }
 }

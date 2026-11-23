@@ -12,6 +12,7 @@ abstract final class SariBrandDecor {
   static const Color shelfRed = Color(0xFFD9482B);
   static const Color shelfTan = Color(0xFFE8D9B0);
   static const Color onGreen = Color(0xFFFFF6DF);
+  static const Color splashGreen = Color(0xFF0E5A3A);
 
   /// Auth/splash header green (existing light primary brand).
   static const Color headerGreen = AppColors.lightPrimary;

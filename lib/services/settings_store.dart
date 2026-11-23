@@ -166,6 +166,11 @@ class SettingsStore extends ChangeNotifier {
   }
 
   Future<void> load() async {
+    await loadLocal();
+    await refreshFromFirestore();
+  }
+
+  Future<void> loadLocal() async {
     final prefs = await SharedPreferences.getInstance();
     _currencyCode = prefs.getString(_kCurrency) ?? 'PHP';
     if (_currencyCode != 'PHP') {
@@ -184,6 +189,11 @@ class SettingsStore extends ChangeNotifier {
       prefs.getString(_kThemeMode) ?? prefs.getString(_kThemeModeLegacy),
     );
 
+    _loaded = true;
+    notifyListeners();
+  }
+
+  Future<void> refreshFromFirestore() async {
     // Prefer Firestore user settings when logged in.
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {

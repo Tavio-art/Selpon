@@ -15,6 +15,8 @@ class UserProfileStore extends ChangeNotifier {
   bool _loaded = false;
   String? _error;
   String? _uid;
+  Future<void>? _loadInFlight;
+  String? _loadInFlightUid;
 
   String get displayName => _displayName;
   String get storeName => _storeName;
@@ -49,14 +51,29 @@ class UserProfileStore extends ChangeNotifier {
     await reload();
   }
 
-  Future<void> reload() async {
+  Future<void> reload() {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       _resetLocal();
       notifyListeners();
-      return;
+      return Future<void>.value();
     }
 
+    final inFlight = _loadInFlight;
+    if (inFlight != null && _loadInFlightUid == user.uid) return inFlight;
+
+    final load = _reload(user);
+    _loadInFlight = load;
+    _loadInFlightUid = user.uid;
+    return load.whenComplete(() {
+      if (identical(_loadInFlight, load)) {
+        _loadInFlight = null;
+        _loadInFlightUid = null;
+      }
+    });
+  }
+
+  Future<void> _reload(User user) async {
     _loading = true;
     _error = null;
     _uid = user.uid;
@@ -67,6 +84,7 @@ class UserProfileStore extends ChangeNotifier {
           .collection('users')
           .doc(user.uid)
           .get();
+      if (FirebaseAuth.instance.currentUser?.uid != user.uid) return;
 
       if (!doc.exists || doc.data() == null) {
         _displayName = user.displayName?.trim() ?? '';
@@ -81,12 +99,12 @@ class UserProfileStore extends ChangeNotifier {
       }
 
       final data = doc.data()!;
-      
+
       // Binabasa na ang web fields ('full_name', 'store_name', 'profile_image')
       final rawFullName = (data['full_name'] ?? '').toString().trim();
       final firstName = (data['firstName'] ?? '').toString().trim();
       final lastName = (data['lastName'] ?? '').toString().trim();
-      
+
       final fullName = rawFullName.isNotEmpty 
           ? rawFullName 
           : [firstName, lastName].where((part) => part.isNotEmpty).join(' ');
@@ -107,6 +125,7 @@ class UserProfileStore extends ChangeNotifier {
       notifyListeners();
     } catch (e, st) {
       debugPrint('[UserProfileStore] load failed: $e\n$st');
+      if (FirebaseAuth.instance.currentUser?.uid != user.uid) return;
       _displayName = user.displayName?.trim() ?? '';
       _username = '';
       _storeName = '';

@@ -12,23 +12,13 @@ import '../../core/widgets/app_bottom_nav.dart';
 import '../../core/widgets/app_page_header.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/order.dart';
+import '../../models/product.dart';
 import '../../services/firebase_service.dart';
 import '../../services/notification_store.dart';
+import '../../services/product_repository.dart';
 import '../../services/settings_store.dart';
 import '../../theme/app_theme.dart';
 import 'dashboard_metrics.dart';
-
-/// Web-aligned category labels used for the Sales by Category donut.
-const _kWebCategories = <String>[
-  'Beverages',
-  'Coffee & Tea',
-  'Snacks',
-  'Noodles',
-  'Canned Goods',
-  'Condiments',
-  'Personal Care',
-  'Household',
-];
 
 const _kCategoryColors = <Color>[
   Color(0xFF2E7D4F),
@@ -58,6 +48,8 @@ class _DashboardSectionState extends State<DashboardSection> {
 
   late final Query<Map<String, dynamic>>? _ordersQuery;
   late final Stream<QuerySnapshot<Map<String, dynamic>>>? _ordersStream;
+  Stream<List<Product>>? _productsStream;
+  String? _lastLoggedTotalsKey;
 
   @override
   void initState() {
@@ -69,24 +61,38 @@ class _DashboardSectionState extends State<DashboardSection> {
       return;
     }
 
-    final now = _manilaNow();
-    final yearStartUtc =
-        DateTime.utc(now.year).subtract(const Duration(hours: 8));
-    final nextYearStartUtc = DateTime.utc(now.year + 1)
-        .subtract(const Duration(hours: 8));
+    if (widget.isActive) {
+      _productsStream = ProductRepository.instance.watchProducts();
+    }
+
+    final now = DashboardMetrics.manilaNow();
     _ordersQuery = FirebaseFirestore.instance
         .collection(FirebaseService.ordersPath)
         .where('userId', isEqualTo: userId)
         .where(
           'createdAt',
-          isGreaterThanOrEqualTo: Timestamp.fromDate(yearStartUtc),
+          isGreaterThanOrEqualTo: Timestamp.fromDate(
+            DashboardMetrics.manilaYearStartUtc(now.year),
+          ),
         )
         .where(
           'createdAt',
-          isLessThan: Timestamp.fromDate(nextYearStartUtc),
+          isLessThan: Timestamp.fromDate(
+            DashboardMetrics.manilaNextYearStartUtc(now.year),
+          ),
         )
         .orderBy('createdAt', descending: true);
     _ordersStream = _ordersQuery!.snapshots(includeMetadataChanges: true);
+  }
+
+  @override
+  void didUpdateWidget(covariant DashboardSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.isActive && widget.isActive && _productsStream == null) {
+      _productsStream = ProductRepository.instance.watchProducts();
+    } else if (oldWidget.isActive && !widget.isActive) {
+      _productsStream = null;
+    }
   }
 
   Future<void> _refreshFromServer() async {
@@ -103,9 +109,9 @@ class _DashboardSectionState extends State<DashboardSection> {
   }
 
   DateTime? _manilaTime(DateTime? date) =>
-      date?.toUtc().add(const Duration(hours: 8));
+      date == null ? null : DashboardMetrics.toManila(date);
 
-  DateTime _manilaNow() => DateTime.now().toUtc().add(const Duration(hours: 8));
+  DateTime _manilaNow() => DashboardMetrics.manilaNow();
 
   @override
   Widget build(BuildContext context) {
@@ -197,17 +203,24 @@ class _DashboardSectionState extends State<DashboardSection> {
                     snapshot.data!.metadata.isFromCache ||
                     snapshot.data!.metadata.hasPendingWrites;
 
-                return RefreshIndicator(
-                  color: scheme.primary,
-                  onRefresh: _refreshFromServer,
-                  child: _buildBody(
-                    settings,
-                    l10n,
-                    locale,
-                    orders,
-                    now,
-                    isSyncing,
-                  ),
+                return StreamBuilder<List<Product>>(
+                  stream: widget.isActive ? _productsStream : null,
+                  builder: (context, productsSnapshot) {
+                    return RefreshIndicator(
+                      color: scheme.primary,
+                      onRefresh: _refreshFromServer,
+                      child: _buildBody(
+                        settings,
+                        l10n,
+                        locale,
+                        orders,
+                        now,
+                        isSyncing,
+                        products: productsSnapshot.data ?? const <Product>[],
+                        categoryLookupError: productsSnapshot.error,
+                      ),
+                    );
+                  },
                 );
               },
             );
@@ -223,8 +236,11 @@ class _DashboardSectionState extends State<DashboardSection> {
     String locale,
     List<StoreOrder> orders,
     DateTime now,
-    bool isSyncing,
-  ) {
+    bool isSyncing, {
+    required List<Product> products,
+    Object? categoryLookupError,
+  }) {
+    final saleOrders = orders.where(DashboardMetrics.countsAsSale).toList();
     final day30 = DateTime.utc(
       now.year,
       now.month,
@@ -241,39 +257,41 @@ class _DashboardSectionState extends State<DashboardSection> {
     for (final o in orders) {
       final when = _manilaTime(o.createdAt);
       if (when == null || when.isBefore(day30)) continue;
+      if (!DashboardMetrics.countsAsSale(o)) continue;
       revenue30 += o.total;
       tx30++;
     }
-    final profit30 = revenue30 * 0.20;
-    const profitMargin = 20.0;
+    revenue30 = DashboardMetrics.roundCurrency(revenue30);
+    final profit30 = DashboardMetrics.estimatedProfit(revenue30);
+    const profitMargin = DashboardMetrics.estimatedProfitMargin * 100;
     final avgSale = tx30 > 0 ? revenue30 / tx30 : 0.0;
 
     final yearRevenue = List<double>.filled(12, 0);
     final yearProfit = List<double>.filled(12, 0);
-    for (final o in orders) {
+    for (final o in saleOrders) {
       final when = _manilaTime(o.createdAt);
       if (when == null || when.year != now.year) continue;
       yearRevenue[when.month - 1] += o.total;
-      yearProfit[when.month - 1] += o.total * 0.20;
+    }
+    for (var month = 0; month < yearRevenue.length; month++) {
+      yearRevenue[month] = DashboardMetrics.roundCurrency(yearRevenue[month]);
+      yearProfit[month] = DashboardMetrics.estimatedProfit(yearRevenue[month]);
     }
 
-    final categoryTotals = <String, double>{};
-    for (final o in orders) {
-      for (final item in o.items) {
-        final cat = _normalizeCategory((item['category'] ?? '').toString());
-        final qty = (item['quantity'] as num?)?.toDouble() ?? 0;
-        final price = (item['price'] as num?)?.toDouble() ?? 0;
-        final sub = (item['subtotal'] as num?)?.toDouble() ?? (price * qty);
-        categoryTotals[cat] = (categoryTotals[cat] ?? 0) + sub;
-      }
-    }
+    final categoryTotals = DashboardMetrics.categoryRevenue(
+      orders: saleOrders,
+      products: products,
+    );
     final categoryEntries = categoryTotals.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     final categorySum = categoryEntries.fold<double>(0, (s, e) => s + e.value);
+    final categoryPercentages = DashboardMetrics.percentageShares(
+      categoryEntries.map((entry) => entry.value),
+    );
 
     final monthSoldQty = <String, int>{};
     final monthSoldRev = <String, double>{};
-    for (final o in orders) {
+    for (final o in saleOrders) {
       final when = _manilaTime(o.createdAt);
       if (when == null || when.year != now.year || when.month != now.month) {
         continue;
@@ -297,7 +315,7 @@ class _DashboardSectionState extends State<DashboardSection> {
 
     var cashTotal = 0.0;
     var creditTotal = 0.0;
-    for (final o in orders) {
+    for (final o in saleOrders) {
       final method = o.paymentMethod.toLowerCase();
       if (method.contains('credit') || method.contains('utang')) {
         creditTotal += o.total;
@@ -308,6 +326,18 @@ class _DashboardSectionState extends State<DashboardSection> {
     final paySum = cashTotal + creditTotal;
     final cashPct = paySum > 0 ? (cashTotal / paySum) * 100 : 0.0;
     final creditPct = paySum > 0 ? (creditTotal / paySum) * 100 : 0.0;
+    final yearRevenueTotal = DashboardMetrics.totalRevenue(saleOrders);
+    final logKey = '${now.year}:$yearRevenueTotal:${saleOrders.length}';
+    if (_lastLoggedTotalsKey != logKey) {
+      _lastLoggedTotalsKey = logKey;
+      debugPrint(
+        '[DashboardMetrics] period=${now.year} Asia/Manila '
+        'revenuePHP=${yearRevenueTotal.toStringAsFixed(2)} '
+        'estimatedProfitPHP='
+        '${DashboardMetrics.estimatedProfit(yearRevenueTotal).toStringAsFixed(2)} '
+        'orders=${saleOrders.length}',
+      );
+    }
 
     final monthLabels = List<String>.generate(
       12,
@@ -524,7 +554,7 @@ class _DashboardSectionState extends State<DashboardSection> {
                               ),
                             ),
                             Text(
-                              '${((categoryEntries[i].value / categorySum) * 100).toStringAsFixed(0)}%',
+                              '${categoryPercentages[i]}%',
                               style: GoogleFonts.outfit(
                                 color: sari.mutedText,
                                 fontSize: 13,
@@ -537,6 +567,15 @@ class _DashboardSectionState extends State<DashboardSection> {
                   ],
                 ),
         ),
+        if (categoryLookupError != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'Some older order categories could not be resolved: '
+              '$categoryLookupError',
+              style: GoogleFonts.outfit(color: sari.danger, fontSize: 12),
+            ),
+          ),
         const SizedBox(height: 22),
 
         // Top Products This Month
@@ -693,23 +732,6 @@ class _DashboardSectionState extends State<DashboardSection> {
         ),
       ],
     );
-  }
-
-  static String _normalizeCategory(String raw) {
-    final n = raw.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
-    if (n.isEmpty) return 'Other';
-    if (n == 'beverage' || n == 'beverages') return 'Beverages';
-    if (n.startsWith('coffee') || n.contains('tea')) return 'Coffee & Tea';
-    if (n.contains('snack')) return 'Snacks';
-    if (n.contains('noodle')) return 'Noodles';
-    if (n.startsWith('cann')) return 'Canned Goods';
-    if (n.contains('condiment') || n.contains('sauce')) return 'Condiments';
-    if (n.contains('personal')) return 'Personal Care';
-    if (n.contains('household') || n.contains('cleaning')) return 'Household';
-    for (final known in _kWebCategories) {
-      if (known.toLowerCase() == n) return known;
-    }
-    return 'Other';
   }
 
   Widget _compactStat({required String label, required String value}) {

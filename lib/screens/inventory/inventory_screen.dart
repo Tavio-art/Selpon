@@ -32,6 +32,194 @@ class InventoryScreen extends StatefulWidget {
 
 enum _InventoryFilter { all, lowStock, bestSellers, outOfStock }
 
+class _QuickEditDialog extends StatefulWidget {
+  const _QuickEditDialog({
+    required this.product,
+    required this.onOpenFullEdit,
+    required this.onSave,
+  });
+
+  final Product product;
+  final VoidCallback onOpenFullEdit;
+  final Future<void> Function(Product updated) onSave;
+
+  @override
+  State<_QuickEditDialog> createState() => _QuickEditDialogState();
+}
+
+class _QuickEditDialogState extends State<_QuickEditDialog> {
+  late final TextEditingController _priceController;
+  late final TextEditingController _stockController;
+
+  @override
+  void initState() {
+    super.initState();
+    _priceController = TextEditingController(
+      text: widget.product.price.toStringAsFixed(2),
+    );
+    _stockController = TextEditingController(
+      text: widget.product.stock.toString(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _priceController.dispose();
+    _stockController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final product = widget.product;
+    final scheme = Theme.of(context).colorScheme;
+    final sari = context.sari;
+
+    return AlertDialog(
+      backgroundColor: sari.cardSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            product.name,
+            style: GoogleFonts.outfit(
+              color: scheme.onSurface,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            context.l10n.text('quickUpdatePriceStock'),
+            style: GoogleFonts.outfit(
+              color: sari.mutedText,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AppTextField(
+            controller: _priceController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            hintText: context.l10n.text(
+              'priceLabel',
+              values: {'symbol': SettingsStore.instance.currencySymbol},
+            ),
+            prefixIcon: Icons.payments_outlined,
+          ),
+          const SizedBox(height: 12),
+          AppTextField(
+            controller: _stockController,
+            keyboardType: TextInputType.number,
+            hintText: context.l10n.text('stockQuantity'),
+            prefixIcon: Icons.layers_outlined,
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                widget.onOpenFullEdit();
+              },
+              child: Text(
+                context.l10n.text('editAllDetails'),
+                style: GoogleFonts.outfit(
+                  color: sari.accentAmber,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(
+            context.l10n.text('cancel'),
+            style: GoogleFonts.outfit(color: sari.mutedText),
+          ),
+        ),
+        ElevatedButton(
+          onPressed: () async {
+            final parsedPrice = double.tryParse(_priceController.text.trim());
+            final parsedStock = int.tryParse(_stockController.text.trim());
+            if (parsedPrice == null || parsedPrice < 0) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(context.l10n.text('invalidPrice')),
+                    backgroundColor: sari.danger,
+                  ),
+                );
+              }
+              return;
+            }
+            if (parsedStock == null || parsedStock < 0) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(context.l10n.text('quantityMinimum')),
+                    backgroundColor: sari.danger,
+                  ),
+                );
+              }
+              return;
+            }
+
+            final updated = Product(
+              id: product.id,
+              name: product.name,
+              size: product.size,
+              category: product.category,
+              sku: product.sku,
+              price: parsedPrice,
+              stock: parsedStock,
+              imageUrl: product.imageUrl,
+              barcode: product.barcode,
+              catalogProductId: product.catalogProductId.isNotEmpty
+                  ? product.catalogProductId
+                  : (product.isCatalogOnly ? product.id : ''),
+            );
+
+            try {
+              await widget.onSave(updated);
+              if (!mounted) return;
+              Navigator.pop(this.context);
+            } catch (error) {
+              if (!mounted) return;
+              ScaffoldMessenger.of(this.context).showSnackBar(
+                SnackBar(
+                  content: Text(this.context.l10n.text(
+                    'failed',
+                    values: {'error': '$error'},
+                  )),
+                  backgroundColor: sari.danger,
+                ),
+              );
+            }
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: scheme.primary,
+            foregroundColor: scheme.onPrimary,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+            ),
+          ),
+          child: Text(context.l10n.text('save')),
+        ),
+      ],
+    );
+  }
+}
+
 class _InventoryScreenState extends State<InventoryScreen> {
   final ProductRepository _products = ProductRepository.instance;
   final UserProfileStore _profile = UserProfileStore.instance;
@@ -141,166 +329,17 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 
   void _showQuickEditDialog(Product product) {
-    final priceController =
-        TextEditingController(text: product.price.toStringAsFixed(2));
-    final stockController =
-        TextEditingController(text: product.stock.toString());
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final sari = context.sari;
-
-    showDialog(
+    showDialog<void>(
       context: context,
-      builder: (dialogCtx) {
-        return AlertDialog(
-          backgroundColor: sari.cardSurface,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                product.name,
-                style: GoogleFonts.outfit(
-                  color: scheme.onSurface,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                context.l10n.text('quickUpdatePriceStock'),
-                style: GoogleFonts.outfit(
-                  color: sari.mutedText,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AppTextField(
-                controller: priceController,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                hintText: context.l10n.text(
-                  'priceLabel',
-                  values: {'symbol': SettingsStore.instance.currencySymbol},
-                ),
-                prefixIcon: Icons.payments_outlined,
-              ),
-              const SizedBox(height: 12),
-              AppTextField(
-                controller: stockController,
-                keyboardType: TextInputType.number,
-                hintText: context.l10n.text('stockQuantity'),
-                prefixIcon: Icons.layers_outlined,
-              ),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton(
-                  onPressed: () {
-                    Navigator.pop(dialogCtx);
-                    _openFullEdit(product);
-                  },
-                  child: Text(
-                    context.l10n.text('editAllDetails'),
-                    style: GoogleFonts.outfit(
-                      color: sari.accentAmber,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogCtx),
-              child: Text(
-                context.l10n.text('cancel'),
-                style: GoogleFonts.outfit(color: sari.mutedText),
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final parsedPrice =
-                    double.tryParse(priceController.text.trim());
-                final parsedStock = int.tryParse(stockController.text.trim());
-                if (parsedPrice == null || parsedPrice < 0) {
-                  if (dialogCtx.mounted) {
-                    ScaffoldMessenger.of(dialogCtx).showSnackBar(
-                      SnackBar(
-                        content: Text(context.l10n.text('invalidPrice')),
-                        backgroundColor: sari.danger,
-                      ),
-                    );
-                  }
-                  return;
-                }
-                if (parsedStock == null || parsedStock < 0) {
-                  if (dialogCtx.mounted) {
-                    ScaffoldMessenger.of(dialogCtx).showSnackBar(
-                      SnackBar(
-                        content: Text(context.l10n.text('quantityMinimum')),
-                        backgroundColor: sari.danger,
-                      ),
-                    );
-                  }
-                  return;
-                }
-
-                final updated = Product(
-                  id: product.id,
-                  name: product.name,
-                  size: product.size,
-                  category: product.category,
-                  sku: product.sku,
-                  price: parsedPrice,
-                  stock: parsedStock,
-                  imageUrl: product.imageUrl,
-                  barcode: product.barcode,
-                  catalogProductId: product.catalogProductId.isNotEmpty
-                      ? product.catalogProductId
-                      : (product.isCatalogOnly ? product.id : ''),
-                );
-
-                try {
-                  await _products.updateProduct(
-                    product.barcode,
-                    updated,
-                    oldInventoryId: product.id,
-                  );
-                  if (dialogCtx.mounted) Navigator.pop(dialogCtx);
-                } catch (e) {
-                  if (!dialogCtx.mounted) return;
-                  ScaffoldMessenger.of(dialogCtx).showSnackBar(
-                    SnackBar(
-                      content: Text(context.l10n.text(
-                        'failed',
-                        values: {'error': '$e'},
-                      )),
-                      backgroundColor: sari.danger,
-                    ),
-                  );
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: scheme.primary,
-                foregroundColor: scheme.onPrimary,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24),
-                ),
-              ),
-              child: Text(context.l10n.text('save')),
-            ),
-          ],
-        );
-      },
+      builder: (_) => _QuickEditDialog(
+        product: product,
+        onOpenFullEdit: () => _openFullEdit(product),
+        onSave: (updated) => _products.updateProduct(
+          product.barcode,
+          updated,
+          oldInventoryId: product.id,
+        ),
+      ),
     );
   }
 

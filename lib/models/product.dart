@@ -127,6 +127,7 @@ class Product {
     // Read category.
     final category = _firstNonEmpty([
       map['category'],
+      map['categoryName'],
       map['productCategory'],
     ]);
 
